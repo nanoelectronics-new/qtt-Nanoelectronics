@@ -1,0 +1,55 @@
+language: python
+matrix:
+  include:
+  - name: Minimal installation 3.6
+    python: 3.6
+    sudo: true
+    dist: bionic
+    env: QT_QPA_PLATFORM=offscreen
+    services:
+    - xvfb
+  - name: Minimal installation 3.7
+    python: 3.7
+    sudo: true
+    dist: bionic
+    env: QT_QPA_PLATFORM=offscreen
+    services:
+    - xvfb
+  - name: Full installation 3.6
+    python: 3.6
+    dist: bionic
+    env: FULL_INSTALL=1
+    services:
+    - xvfb
+  - name: Full installation 3.7
+    python: 3.7
+    dist: bionic
+    env: FULL_INSTALL=1
+    services:
+    - xvfb
+install:
+  - pip install coveralls
+  - pip install --upgrade pip
+  - pip install -e .
+  - export QT_QPA_PLATFORM=offscreen
+script:
+  - ls
+  - pytest --version
+  - xvfb-run -a coverage run --source="./src/qtt" --omit="./src/qtt/legacy.py","./src/qtt/measurements/ttrace.py" -m pytest
+  - mypy src --ignore-missing-imports
+  - if [[ "$FULL_INSTALL" == "1" ]]; then
+      jupyter --version;
+      bash docs/notebooks/select_notebooks_to_execute.sh;
+    fi
+  - python docs/notebooks/qtt_example.py
+after_success:
+  - coveralls
+deploy:
+  provider: pypi
+  user: qutech.sdst
+  password:
+    secure: RwTnD4RBnErHXF8umOlLmePlXSwbRlF7F6Mw7OVgvFVCu7cs8AJORYclCDjcVhCxqTNTPiSp3PnTpHJrC32EV6zyI2D9aFB+CjDHYgsbWO45lknP7X3QLr+cbWd2ApgZk3h8WOn+LyXtH8+YLl46ujAApES2K04Tp3DPqFDkdlzDjhSp3FyvQ1RYx84YlROSxAsUrvWiGfVc1BoF7lSqknvxomHmGUrQlatSpmoJ0JvMuz+8o6zHLOWyXQDSiHkAg+kkRYuJY+eJBQRdpKwa5ZH0O00WKSuwEMQl3d+wQJL5GTiqbBBhYWmakARX6OQToMbKKxUZ+VZsv2N6CwuhmSgGYmzl9b6UK2o5kiPDcFqfqmwiSOJFH7Eg4D8xAZCJyrbeeKzGzddq+STBgAEK59zAq7Vx3Lqsqv81vQlbIatBIZxQtvkwxsqnaGib0Xvu7p3TDjkXX4kZVOdEDx1+mwJgkIVAcTJSq/ILjIQIP3cOYWDTzVS4VFm6OrWuiXNllyzzfKNTjhoJnwea4QHqkqLTwUYMxr6qighXSiP6mBB1uyNMoKXBypD7pHMyZvrlWjxoV5UnGCGl0v8oGURzzUXqPIaNtcFnIgGCaabtkE+gyPyVVnOQyjJYW5aVEFDKIyARPhu8IrMLBefdnWKpQTJW7wXCDiRvTqa03AgE6Rg=
+  on:
+    tags: true
+    branch: master
+  skip_existing: true
