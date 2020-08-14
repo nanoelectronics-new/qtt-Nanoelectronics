@@ -1429,25 +1429,30 @@ def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam=
 
             datapoint = {sweepvalues.parameter.name: y}
 
-            for ii, p in enumerate(mparams):
 
-                digitizer.daq.sync() 
-                data = digitizer.daq.poll(poll_length, poll_timeout, poll_flags, poll_return_flat_dict)  # Readout from subscribed node (demodulator)
-                # Check the dictionary returned is non-empty
-                assert data, "poll() returned an empty data dictionary, did you subscribe to any paths?"
-                # Note, the data could be empty if no data arrived, e.g., if the demods were
-                # disabled or had demodulator rate 0
-                assert path_demod in data, "data dictionary has no key '%s'" % path_demod
-                # The data returned is a dictionary of dictionaries that reflects the node's path
-                sample = data[path_demod]
-                sample_x = np.array(sample['x'])    # Converting samples to numpy arrays for faster calculation
-                sample_y = np.array(sample['y'])    # Converting samples to numpy arrays for faster calculation
-                sample_r = np.sqrt(sample_x**2 + sample_y**2)   # Calculating R value from X and y value
-                mean_x = np.mean(sample_x)
-                mean_y = np.mean(sample_y)
-                mean_r = np.mean(sample_r)  # Mean value of recorded data vector
-                mean_fi = np.arctan2(mean_y,mean_x) * 180 / np.pi  # Calculating the angle value in degrees
-                datapoint[measure_names[ii]] = mean_r
+            digitizer.daq.sync() 
+            data = digitizer.daq.poll(poll_length, poll_timeout, poll_flags, poll_return_flat_dict)  # Readout from subscribed node (demodulator)
+            # Check the dictionary returned is non-empty
+            assert data, "poll() returned an empty data dictionary, did you subscribe to any paths?"
+            # Note, the data could be empty if no data arrived, e.g., if the demods were
+            # disabled or had demodulator rate 0
+            assert path_demod in data, "data dictionary has no key '%s'" % path_demod
+            # The data returned is a dictionary of dictionaries that reflects the node's path
+            sample = data[path_demod]
+            sample_x = np.array(sample['x'])    # Converting samples to numpy arrays for faster calculation
+            sample_y = np.array(sample['y'])    # Converting samples to numpy arrays for faster calculation
+            sample_r = np.sqrt(sample_x**2 + sample_y**2)   # Calculating R value from X and y value
+            mean_x = np.mean(sample_x)
+            mean_y = np.mean(sample_y)
+            mean_r = np.mean(sample_r)  # Mean value of recorded data vector
+            mean_fi = np.arctan2(mean_y,mean_x) * 180 / np.pi  # Calculating the angle value in degrees
+            means = {('demod{}_R'.format(demod_c+1)):mean_r, ('demod{}_phi'.format(demod_c+1)):mean_fi, 
+                    ('demod{}_x'.format(demod_c+1)):mean_x, ('demod{}_y'.format(demod_c+1)):mean_y}
+            #means = []
+            for ii, p in enumerate(mparams):
+                # Saving the demodulator data in the order defined in the scajob minstrument list
+                k = str(p)[10:]
+                datapoint[measure_names[ii]] = means[k]
 
             alldata.store((ix, iy), datapoint)
 
