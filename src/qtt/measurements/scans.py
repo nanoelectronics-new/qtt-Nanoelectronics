@@ -1284,6 +1284,203 @@ def scan2D(station, scanjob, location=None, liveplotwindow=None, plotparam='meas
     return alldata
 
 
+def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam='measured', diff_dir=None, write_period=None,
+           update_period=5, verbose=1, extra_metadata=None, demod_c = 3, poll_length = 0.003):
+    """
+
+    !!! This function is a version of the standard scan2D function but for using only when reading UHFLI nodes
+        with the poll command. !!!
+
+    Make a 2D scan and create dictionary to store on disk.
+
+
+    For 2D vector scans see also the documentation of the _convert_scanjob_vec
+    method of the scanjob_t class.
+
+    Args:
+        station (object): contains all the instruments
+        scanjob (scanjob_t): data for scan
+        write_period (float): save-to-disk interval in lines, None for no writing before finished
+        update_period (float): liveplot update interval in lines, None for no updates
+        extra_metadata (None or dict): additional metadata to be included in the dataset
+        demod_c (int): 0-7 UHFLI demodulator channel
+        poll_length (float): duration of poll acquisition, in seconds
+
+    Returns:
+        alldata (DataSet): contains the measurement data and metadata
+    """
+    gates = station.gates
+    gatevals = gates.allvalues()
+
+    scanjob.check_format()
+
+    minstrument = parse_minstrument(scanjob)
+    mparams = get_measurement_params(station, minstrument)
+
+
+    if type(scanjob) is dict:
+        warnings.warn('Use the scanjob_t class.', DeprecationWarning)
+        scanjob = scanjob_t(scanjob)
+
+    scanjob._parse_stepdata('stepdata', gates)
+    scanjob._parse_stepdata('sweepdata', gates)
+
+    scanjob.parse_param('sweepdata', station, paramtype='slow')
+    scanjob.parse_param('stepdata', station, paramtype='slow')
+
+    if isinstance(scanjob['stepdata']['param'], lin_comb_type) or isinstance(scanjob['sweepdata']['param'],
+                                                                             lin_comb_type):
+        scanjob['scantype'] = 'scan2Dvec'
+        if 'stepvalues' in scanjob:
+            scanjob._start_end_to_range(scanfields=['sweepdata'])
+        else:
+            scanjob._start_end_to_range()
+        scanjob._parse_2Dvec()
+    else:
+        scanjob['scantype'] = 'scan2D'
+
+    stepvalues, sweepvalues = scanjob._convert_scanjob_vec(station, stepvalues=scanjob.get('stepvalues', None))
+
+    stepdata = scanjob['stepdata']
+    sweepdata = scanjob['sweepdata']
+
+    wait_time_sweep = sweepdata.get('wait_time', 0)
+    wait_time_step = stepdata.get('wait_time', 0)
+    wait_time_startscan = scanjob.get('wait_time_startscan', wait_time_step)
+    logging.info('scan2D: %d %d' % (len(stepvalues), len(sweepvalues)))
+    logging.info('scan2D: wait_time_sweep %f' % wait_time_sweep)
+    logging.info('scan2D: wait_time_step %f' % wait_time_step)
+
+    if type(stepvalues) is np.ndarray:
+        stepvalues = stepdata['param'][list(stepvalues[:, 0])]
+
+    alldata, (set_names, measure_names) = makeDataSet2D(stepvalues, sweepvalues, measure_names=mparams,
+                                                        location=location, loc_record={'label': _dataset_record_label(scanjob)}, return_names=True)
+
+    if verbose >= 2:
+        print('scan2D: created dataset')
+        print('  set_names: %s ' % (set_names,))
+        print('  measure_names: %s ' % (measure_names,))
+
+    if plotparam == 'all':
+        liveplotwindow = _initialize_live_plotting(alldata, measure_names, liveplotwindow, subplots=True)
+    else:
+        liveplotwindow = _initialize_live_plotting(alldata, plotparam, liveplotwindow, subplots=True)
+
+    t0 = time.time()
+    tprev = time.time()
+
+    # disable time-based write period
+    alldata.write_period = None
+
+    # Subscribing to the demodulator
+    path_demod = '/%s/demods/%d/sample' % (minstrument.device, demod_c)
+    minstrument.subscribe(path_demod)
+    TC = minstrument.getDouble('/%s/demods/%s/timeconstant' % (minstrument.device, demod_c))
+    wait_time_sweep = np.max([wait_time_sweep,3*TC]) # Ensure that the time between setting the dac and getting next point is not 
+                                                     # less than 3*TC
+    for ix, x in enumerate(stepvalues):
+        alldata.store((ix,), {stepvalues.parameter.name: x})
+
+        if verbose:
+            t1 = time.time() - t0
+            t1_str = time.strftime('%H:%M:%S', time.gmtime(t1))
+            if ix == 0:
+                time_est = len(sweepvalues) * len(stepvalues) * \
+                    scanjob['sweepdata'].get('wait_time', 0) * 2
+            else:
+                time_est = t1 / ix * len(stepvalues) - t1
+            time_est_str = time.strftime(
+                '%H:%M:%S', time.gmtime(time_est))
+            # NEW LINE (added by JoKu at 20200726)
+            if ix<5:
+                if type(stepvalues) is np.ndarray:
+                    tprint('scan2D: %d/%d, time %s (~%s remaining): setting %s to %s' %
+                        (ix, len(stepvalues), t1_str, time_est_str, stepdata['param'].name, str(x)), dt=1.5)
+                else:
+                    tprint('scan2D: %d/%d: time %s (~%s remaining): setting %s to %.3f' %
+                        (ix, len(stepvalues), t1_str, time_est_str, stepvalues.name, x), dt=1.5)
+
+        if scanjob['scantype'] == 'scan2Dvec':
+            pass
+        else:
+            stepvalues.set(x)
+        for iy, y in enumerate(sweepvalues):
+            if scanjob['scantype'] == 'scan2Dvec':
+                for param in scanjob['phys_gates_vals']:
+                    gates.set(param, scanjob['phys_gates_vals'][param][ix, iy])
+            else:
+                sweepvalues.set(y)
+            if iy == 0:
+                if ix == 0:
+                    time.sleep(wait_time_startscan)
+                else:
+                    time.sleep(wait_time_step)
+            if wait_time_sweep > 0:
+                time.sleep(wait_time_sweep)
+
+            datapoint = {sweepvalues.parameter.name: y}
+
+            for ii, p in enumerate(mparams):
+
+
+                datapoint[measure_names[ii]] =  
+
+            alldata.store((ix, iy), datapoint)
+
+        if write_period is not None:
+            if ix % write_period == write_period - 1:
+                alldata.write()
+                alldata.last_write = time.time()
+        if update_period is not None:
+            if ix % update_period == update_period - 1:
+                delta, tprev, update = _delta_time(tprev, thr=0.5)
+
+                if update and liveplotwindow:
+                    liveplotwindow.update_plot()
+                    pyqtgraph.mkQApp().processEvents()
+
+        if qtt.abort_measurements():
+            print('  aborting measurement loop')
+            break
+    dt = time.time() - t0
+
+    if liveplotwindow:
+        liveplotwindow.update_plot()
+
+    if diff_dir is not None:
+        alldata = diffDataset(alldata, diff_dir=diff_dir, fig=None)
+
+    if scanjob['scantype'] == 'scan2Dvec':
+        for param in scanjob['phys_gates_vals']:
+            parameter = gates.parameters[param]
+            if parameter.name in alldata.arrays.keys():
+                warnings.warn('parameter %s already in dataset, skipping!' % parameter.name)
+                continue
+
+            arr = DataArray(name=parameter.name, array_id=parameter.name, label=parameter.label, unit=parameter.unit,
+                            preset_data=scanjob['phys_gates_vals'][param],
+                            set_arrays=(
+                                alldata.arrays[stepvalues.parameter.name], alldata.arrays[sweepvalues.parameter.name]))
+
+            alldata.add_array(arr)
+
+    if not hasattr(alldata, 'metadata'):
+        alldata.metadata = dict()
+
+    if extra_metadata is not None:
+        update_dictionary(alldata.metadata, **extra_metadata)
+
+    update_dictionary(alldata.metadata, scanjob=dict(scanjob),
+                      dt=dt, station=station.snapshot())
+    update_dictionary(alldata.metadata, allgatevalues=gatevals)
+    _add_dataset_metadata(alldata)
+
+    alldata.write(write_metadata=False) # Commented out by JoKu at 20200726
+
+    return alldata
+
+
 # %%
 
 def get_sampling_frequency(instrument_handle):
