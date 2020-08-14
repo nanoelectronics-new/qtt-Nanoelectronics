@@ -1285,7 +1285,7 @@ def scan2D(station, scanjob, location=None, liveplotwindow=None, plotparam='meas
 
 
 def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam='measured', diff_dir=None, write_period=None,
-           update_period=5, verbose=1, extra_metadata=None, demod_c = 3, poll_length = 0.003):
+           update_period=5, verbose=1, extra_metadata=None, demod_c = 3, poll_length = 0.003, digitizer = None):
     """
 
     !!! This function is a version of the standard scan2D function but for using only when reading UHFLI nodes
@@ -1316,7 +1316,8 @@ def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam=
 
     minstrument = parse_minstrument(scanjob)
     mparams = get_measurement_params(station, minstrument)
-
+    if digitizer == None:
+        raise Exception('Digitizer (UHFLI instance) must be passed')
 
     if type(scanjob) is dict:
         warnings.warn('Use the scanjob_t class.', DeprecationWarning)
@@ -1374,11 +1375,18 @@ def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam=
     alldata.write_period = None
 
     # Subscribing to the demodulator
-    path_demod = '/%s/demods/%d/sample' % (minstrument.device, demod_c)
-    minstrument.subscribe(path_demod)
-    TC = minstrument.getDouble('/%s/demods/%s/timeconstant' % (minstrument.device, demod_c))
+    path_demod = '/%s/demods/%d/sample' % (digitizer.device, demod_c)
+    digitizer.daq.subscribe(path_demod)
+    TC = digitizer.daq.getDouble('/%s/demods/%s/timeconstant' % (digitizer.device, demod_c))
     wait_time_sweep = np.max([wait_time_sweep,3*TC]) # Ensure that the time between setting the dac and getting next point is not 
                                                      # less than 3*TC
+    # Some setting for the poll command - default settings - typically ok
+    poll_timeout = 500  # [ms]
+    poll_flags = 0
+    poll_return_flat_dict = True 
+
+
+
     for ix, x in enumerate(stepvalues):
         alldata.store((ix,), {stepvalues.parameter.name: x})
 
@@ -1423,8 +1431,23 @@ def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam=
 
             for ii, p in enumerate(mparams):
 
-
-                datapoint[measure_names[ii]] =  
+                digitizer.daq.sync() 
+                data = digitizer.daq.poll(poll_length, poll_timeout, poll_flags, poll_return_flat_dict)  # Readout from subscribed node (demodulator)
+                # Check the dictionary returned is non-empty
+                assert data, "poll() returned an empty data dictionary, did you subscribe to any paths?"
+                # Note, the data could be empty if no data arrived, e.g., if the demods were
+                # disabled or had demodulator rate 0
+                assert path_demod in data, "data dictionary has no key '%s'" % path_demod
+                # The data returned is a dictionary of dictionaries that reflects the node's path
+                sample = data[path_demod]
+                sample_x = np.array(sample['x'])    # Converting samples to numpy arrays for faster calculation
+                sample_y = np.array(sample['y'])    # Converting samples to numpy arrays for faster calculation
+                sample_r = np.sqrt(sample_x**2 + sample_y**2)   # Calculating R value from X and y value
+                mean_x = np.mean(sample_x)
+                mean_y = np.mean(sample_y)
+                mean_r = np.mean(sample_r)  # Mean value of recorded data vector
+                mean_fi = np.arctan2(mean_y,mean_x) * 180 / np.pi  # Calculating the angle value in degrees
+                datapoint[measure_names[ii]] = mean_r
 
             alldata.store((ix, iy), datapoint)
 
