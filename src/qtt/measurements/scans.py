@@ -2739,7 +2739,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
         scanjob['scantype'] = 'scan2Dfast'
 
     Segment_duration = scanjob['sweepdata']['segment_duration']
-    Nsegments = 5 # int(scanjob['sweepdata']['end'] - scanjob['sweepdata']['start'])
+    Nsegments = int((scanjob['sweepdata']['end'] - scanjob['sweepdata']['start'])/scanjob['sweepdata']['step'])
     Naverage = scanjob.get('Naverage', 20)
     stepdata = scanjob['stepdata']
     sweepdata = scanjob['sweepdata']
