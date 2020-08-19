@@ -2004,6 +2004,9 @@ def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records
         raise Exception('The virtual awg instance has to be passed')
     scopeModule.set('scopeModule/mode', 1)
     scopeModule.subscribe('/' + device + '/scopes/0/wave')
+    # 'single' : only get a single scope record.
+    #   0 - acquire continuous records
+    #   1 - acquire a single record
     daq.setInt('/%s/scopes/0/single' % device, 1)
     # We additionally need to start the scope: Now the scope is ready to record data upon receiving triggers.
     daq.setInt('/%s/scopes/0/enable' % device, 1)
@@ -2117,7 +2120,7 @@ def measure_segment_uhfli(zi, waveform, channels, number_of_averages=1, **kwargs
 
 
 
-def measure_segment_uhfli_AWG_sync(zi, waveform, virtual_awg, channels, number_of_averages=1, **kwargs):
+def measure_segment_uhfli_AWG_sync(zi, Segment_duration, virtual_awg, channels,number_of_avgs = 5, number_of_segments=1, **kwargs):
     """ 
     Modified by Jaime 2972020
     Measure block data with Zurich Instruments UHFLI
@@ -2146,13 +2149,12 @@ def measure_segment_uhfli_AWG_sync(zi, waveform, virtual_awg, channels, number_o
 
     """
     
-    period = waveform['period']
-    zi.scope_duration.set(period)  # seconds
+    zi.scope_duration.set(Segment_duration)  # seconds
     
     # Set the number of segments in case that number_of_averages is different from zero
-    if number_of_averages != 1:
+    if number_of_segments != 1:
         zi.scope_segments.set('ON')
-        zi.scope_segments_count.set(number_of_averages)
+        zi.scope_segments_count.set(number_of_segments)
     else:
         zi.scope_segments.set('OFF')
 
@@ -2183,21 +2185,34 @@ def measure_segment_uhfli_AWG_sync(zi, waveform, virtual_awg, channels, number_o
         zi.Scope.prepare_scope()
     
     # Run measurement
-    scope_records = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
-    data = []
+    scope_records =[]
+    for ii in range(number_of_avgs):
+        scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
+        scope_records.append(scope_record)
+
+    data_out = []
+    #data_raw_list = []
     for channel_index, _ in enumerate(chans):
-        for _, record in enumerate(scope_records):
-
-            # Obtain array of raw data
-            data_raw = record[0]['wave'][channel_index, :]
-
-            # Reshape and average
-            trace_len = int(len(data_raw)/number_of_averages)
-            data_reshape = np.reshape(data_raw, (number_of_averages, trace_len))
-            avg = np.mean(data_reshape, axis=1) 
-            data.append(avg)
+        data = []
+        for kk in scope_records:
+            for _, record in enumerate(kk):
+    
             
-    return np.array(data)
+    
+                # Obtain array of raw data
+                data_raw = record[0]['wave'][channel_index, :]
+    
+                # Reshape and average
+                trace_len = int(len(data_raw)/number_of_segments)
+                data_reshape = np.reshape(data_raw, (number_of_segments, trace_len))
+                # Averages along each segment
+                avg = np.mean(data_reshape, axis=1) 
+                data.append(avg)
+                #data_raw_list.append(data_raw)
+        # Averages along averages
+        data_out.append(np.mean(data, axis=0)) 
+   
+    return np.array(data_out)#, np.array(data_raw_list)  data_raw_list is left for the future dealing with histograms of single shots 
 
 
 
@@ -2675,6 +2690,207 @@ def scan2Dfast(station, scanjob, location=None, liveplotwindow=None, plotparam='
         print('You are not saving data')
 
     return alldata
+
+
+def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plotparam='measured',
+               diff_dir=None, verbose=1, extra_metadata=None, saving=True, upload_wave = True):
+    """Make a 2D scan and create qcodes dataset to store on disk.
+    
+    Args:
+        station (object): contains all the instruments
+        scanjob (scanjob_t): data for scan
+        extra_metadata (None or dict): additional metadata to be included in the dataset
+        upload_wave (Bool): if True the pulsedata will be upladed to the AWG # added 20200806 by Josip
+    Returns:
+        alldata (DataSet): contains the measurement data and metadata
+    """
+    gates = station.gates
+    gatevals = gates.allvalues()
+
+    scanjob.check_format()
+
+    if 'sd' in scanjob:
+        warnings.warn('sd argument is not supported in scan2Dfast')
+
+    if type(scanjob) is dict:
+        warnings.warn('Use the scanjob_t class.', DeprecationWarning)
+        scanjob = scanjob_t(scanjob)
+
+    scanjob._parse_stepdata('stepdata', gates=gates)
+    scanjob._parse_stepdata('sweepdata', gates=gates)
+
+    scanjob.parse_param('sweepdata', station, paramtype='fast')
+    scanjob.parse_param('stepdata', station, paramtype='slow')
+
+    minstrhandle = qtt.measurements.scans.get_instrument(scanjob.get('minstrumenthandle', 'digitizer'))
+
+    read_ch = get_minstrument_channels(scanjob['minstrument'])
+    virtual_awg = getattr(station, 'virtual_awg', None)
+
+    if isinstance(scanjob['stepdata']['param'], lin_comb_type) or isinstance(scanjob['sweepdata']['param'],
+                                                                             lin_comb_type):
+        scanjob['scantype'] = 'scan2Dfastvec'
+        fast_sweep_gates = scanjob['sweepdata']['param'].copy()
+        if 'stepvalues' in scanjob:
+            scanjob._start_end_to_range(scanfields=['sweepdata'])
+        else:
+            scanjob._start_end_to_range()
+    else:
+        scanjob['scantype'] = 'scan2Dfast'
+
+    Segment_duration = scanjob['sweepdata']['segment_duration']
+    Nsegments = 5 # int(scanjob['sweepdata']['end'] - scanjob['sweepdata']['start'])
+    Naverage = scanjob.get('Naverage', 20)
+    stepdata = scanjob['stepdata']
+    sweepdata = scanjob['sweepdata']
+    period = scanjob['sweepdata'].get('period', 1e-3)
+    wait_time = stepdata.get('wait_time', 0)
+    wait_time_startscan = scanjob.get('wait_time_startscan', 0)
+
+    if scanjob['scantype'] == 'scan2Dfastvec':
+        scanjob._parse_2Dvec()
+        if 'pulsedata' in scanjob:
+            sg = []
+            for g, v in fast_sweep_gates.items():
+                if v != 0:
+                    sg.append(g)
+            if len(sg) > 1:
+                raise (Exception('AWG pulses does not yet support virtual gates'))
+            waveform, _ = station.awg.sweepandpulse_gate({'gate': sg[0], 'sweeprange': sweepdata['range'],
+                                                          'period': period}, scanjob['pulsedata'])
+        else:
+            if virtual_awg:
+                sweep_range = sweepdata['range']
+                waveform = virtual_awg.sweep_gates(fast_sweep_gates, sweep_range, period)
+                virtual_awg.enable_outputs(list(fast_sweep_gates.keys()))
+                virtual_awg.run()
+            else:
+                waveform, sweep_info = station.awg.sweep_gate_virt(fast_sweep_gates, sweepdata['range'], period)
+    else:
+        if 'range' in sweepdata:
+            sweeprange = sweepdata['range']
+        else:
+            sweeprange = (sweepdata['end'] - sweepdata['start'])
+            sweepgate_value = (sweepdata['start'] + sweepdata['end']) / 2
+            #gates.set(sweepdata['paramname'], float(sweepgate_value))
+        
+
+    data = measure_segment_uhfli_AWG_sync(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, number_of_segments = Nsegments)
+
+    if len(read_ch) == 1:
+        measure_names = ['measured']
+    else:
+        measure_names = ['READOUT_ch%d' % c for c in read_ch]
+        if plotparam == 'measured':
+            plotparam = measure_names[0]
+
+    stepvalues, sweepvalues = scanjob._convert_scanjob_vec(station, sweeplength=data[0].shape[0],
+                                                           stepvalues=scanjob.get('stepvalues', None))
+
+    logging.info('scan2D: %d %d' % (len(stepvalues), len(sweepvalues)))
+    logging.info('scan2D: wait_time %f' % wait_time)
+    t0 = time.time()
+
+    if type(stepvalues) is np.ndarray:
+        if stepvalues.ndim > 1:
+            stepvalues_tmp = stepdata['param'].params[0][list(stepvalues[:, 0])]
+        else:
+            stepvalues_tmp = stepdata['param'][list(stepvalues[:, 0])]
+        # added to overwrite array names for setpoint arrays
+        if 'paramname' in sweepdata:
+            stepvalues_tmp.name = sweepdata['paramname']
+        if 'paramname' in stepdata:
+            stepvalues_tmp.name = stepdata['paramname']
+        alldata = makeDataSet2D(stepvalues_tmp, sweepvalues, measure_names=measure_names,
+                                location=location, loc_record={'label': _dataset_record_label(scanjob)})
+    else:
+        if stepvalues.name == sweepvalues.name:
+            stepvalues.name = stepvalues.name + '_y'
+            sweepvalues.name = sweepvalues.name + '_x'
+        alldata = makeDataSet2D(stepvalues, sweepvalues, measure_names=measure_names,
+                                location=location,
+                                loc_record={'label': scanjob.get('dataset_label', _dataset_record_label(scanjob))})
+
+    liveplotwindow = _initialize_live_plotting(alldata, plotparam, liveplotwindow, subplots=True)
+
+    tprev = time.time()
+
+    for ix, x in enumerate(stepvalues):
+        if type(stepvalues) is np.ndarray:
+            tprint('scan2Dfast: %d/%d: setting %s to %s' %
+                   (ix, len(stepvalues), stepdata['param'].name, str(x)), dt=.5)
+        else:
+            tprint('scan2Dfast: %d/%d: setting %s to %.3f' %
+                   (ix, len(stepvalues), stepvalues.name, x), dt=.5)
+        if scanjob['scantype'] == 'scan2Dfastvec' and isinstance(stepdata['param'], dict):
+            for g in stepdata['param']:
+                gates.set(g, (scanjob['phys_gates_vals'][g][ix, 0]
+                              + scanjob['phys_gates_vals'][g][ix, -1]) / 2)
+        else:
+            stepdata['param'].set(x)
+        if ix == 0:
+            time.sleep(wait_time_startscan)
+        else:
+            time.sleep(wait_time)
+
+        data = measure_segment_uhfli_AWG_sync(minstrhandle, Segment_duration, virtual_awg, read_ch,number_of_avgs = Naverage, number_of_segments= Nsegments)
+        for idm, mname in enumerate(measure_names):
+            alldata.arrays[mname].ndarray[ix] = data[idm]
+
+        delta, tprev, update = _delta_time(tprev, thr=1.)
+        if update:
+            if liveplotwindow is not None:
+                liveplotwindow.update_plot()
+            pyqtgraph.mkQApp().processEvents()
+        if qtt.abort_measurements():
+            print('  aborting measurement loop')
+            break
+
+    if virtual_awg:
+        virtual_awg.stop()
+    else:
+        station.awg.stop()
+
+    dt = time.time() - t0
+
+    if liveplotwindow is not None:
+        liveplotwindow.update_plot()
+        pyqtgraph.mkQApp().processEvents()
+
+    if hasattr(stepvalues, 'ndim') and stepvalues.ndim > 1:
+        for idp, steppm_add in enumerate(stepdata['param'].params):
+            if idp <= 0:
+                continue
+            data_arr_step_add = DataArray(steppm_add, name=steppm_add.name, full_name=steppm_add.name,
+                                          array_id=steppm_add.name,
+                                          preset_data=np.repeat(
+                                              stepvalues[:, idp, np.newaxis], alldata.arrays[measure_names[0]].shape[1],
+                                              axis=1),
+                                          set_arrays=alldata.arrays[measure_names[0]].set_arrays)
+            alldata.add_array(data_arr_step_add)
+
+    if diff_dir is not None:
+        for mname in measure_names:
+            alldata = diffDataset(alldata, diff_dir=diff_dir,
+                                  fig=None, meas_arr_name=mname)
+
+    if not hasattr(alldata, 'metadata'):
+        alldata.metadata = dict()
+
+    if extra_metadata is not None:
+        update_dictionary(alldata.metadata, **extra_metadata)
+
+    update_dictionary(alldata.metadata, scanjob=dict(scanjob), allgatevalues=gatevals,
+                      dt=dt, station=station.snapshot())
+    _add_dataset_metadata(alldata)
+
+    if saving == True:
+        alldata.write(write_metadata=True)
+    else:
+        print('You are not saving data')
+
+    return alldata
+
 
 
 def create_vectorscan(virtual_parameter, g_range=1, sweeporstepdata=None, remove_slow_gates=False, station=None,
