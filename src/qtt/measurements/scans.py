@@ -1991,6 +1991,47 @@ def get_uhfli_scope_records(device, daq, scopeModule, number_of_records=1, timeo
     return data[wave_nodepath][:number_of_records]
 
 
+
+def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records=1, timeout=30, virt_awg = None):
+    """
+    Modified by Jaime 2972020
+    Obtain scope records from the device using an instance of the Scope Module.
+
+    
+    """
+    # Enable the scope: Now the scope is ready to record data upon receiving triggers.
+    if virt_awg == None:
+        raise Exception('The virtual awg instance has to be passed')
+    scopeModule.set('scopeModule/mode', 1)
+    scopeModule.subscribe('/' + device + '/scopes/0/wave')
+    daq.setInt('/%s/scopes/0/single' % device, 1)
+    # We additionally need to start the scope: Now the scope is ready to record data upon receiving triggers.
+    daq.setInt('/%s/scopes/0/enable' % device, 1)
+    scopeModule.execute()
+    virt_awg.run() # Starting the AWG after the scope is armed
+    # Wait until the Scope Module has received and processed the desired number of records.
+    start = time.time()
+    records = 0
+    progress = 0
+    while (records < number_of_records) or (progress < 1.0):
+        records = scopeModule.getInt("scopeModule/records")
+        progress = scopeModule.progress()[0]
+        if (time.time() - start) > timeout:
+            # Break out of the loop if for some reason we're no longer receiving scope data from the device.
+            logging.warning(
+                "\nScope Module did not return {} records after {} s - forcing stop.".format(number_of_records,
+                                                                                             timeout))
+            break
+    daq.setInt('/%s/scopes/0/enable' % device, 0)
+    # Read out the scope data from the module.
+    data = scopeModule.read(True)
+    # Stop the module; to use it again we need to call execute().
+    scopeModule.finish()
+    virt_awg.stop() # Switch the AWG execution off
+    wave_nodepath = '/{}/scopes/0/wave'.format(device)
+    return data[wave_nodepath][:number_of_records]    
+
+
 def measure_segment_uhfli(zi, waveform, channels, number_of_averages=1, **kwargs):
     """ 
     Modified by Jaime 2972020
@@ -2072,6 +2113,92 @@ def measure_segment_uhfli(zi, waveform, channels, number_of_averages=1, **kwargs
             data.append(avg)
             
     return np.array(data)
+
+
+
+
+def measure_segment_uhfli_AWG_sync(zi, waveform, virtual_awg, channels, number_of_averages=1, **kwargs):
+    """ 
+    Modified by Jaime 2972020
+    Measure block data with Zurich Instruments UHFLI
+
+    Args:
+        zi (ZIUHFL): Instance of QCoDeS driver for  ZI UHF-LI
+        waveform (dict): Information about the waveform that is to be collected
+        channels (list): List of channels to read from, can be 1, 2 or both.
+        input_signal (list): List of the input signals to read in each channel.
+        
+        Possible values : 'Signal Input 1','Signal Input 2','Trig Input 1',
+        'Trig Input 2','Aux Output 1','Aux Output 2','Aux Output 3'',
+        'Aux Output 4','Aux In 1 Ch 1','Aux In 1 Ch 2','Osc phi Demod 4',
+        'osc phi Demod 8','AU Cartesian 1','AU Cartesian 2','AU Polar 1',
+        'AU Polar 2','Demod 1 X','Demod 1 Y'','Demod 1 R','Demod 1 Phase',
+        'Demod 2 X','Demod 2 Y','Demod 2 R','Demod 2 Phase','Demod 3 X',
+        'Demod 3 Y','Demod 3 R','Demod 3 Phase','Demod 4 X','Demod 4 Y',
+        'Demod 4 R','Demod 4 Phase','Demod 5 X','Demod 5 Y','Demod 5 R',
+        'Demod 5 Phase','Demod 6 X','Demod 6 Y','Demod 6 R','Demod 6 Phase',
+        'Demod 7 X','Demod 7 Y','Demod 7 R','Demod 7 Phase','Demod 8 X',
+        'Demod 8 Y','Demod 8 R','Demod 8 Phase'
+        
+        number_of_averages (int) : Number of times the sample is collected
+    Returns:
+        data (numpy array): An array of arrays, one array per input channel.
+
+    """
+    
+    period = waveform['period']
+    zi.scope_duration.set(period)  # seconds
+    
+    # Set the number of segments in case that number_of_averages is different from zero
+    if number_of_averages != 1:
+        zi.scope_segments.set('ON')
+        zi.scope_segments_count.set(number_of_averages)
+    else:
+        zi.scope_segments.set('OFF')
+
+    UHFLI_read_nodes = {0:'Signal Input 1',1:'Signal Input 2',
+        2:'Demod 1 X',3:'Demod 1 Y',
+        4:'Demod 1 R',5:'Demod 1 Phase',6:'Demod 8 X',
+        7:'Demod 4 X',8:'Demod 4 Y',
+        9:'Demod 4 R',10:'Demod 4 Phase',11:'Demod 8 X',
+        12:'Demod 8 Y',13:'Demod 8 R',14:'Demod 8 Phase'}
+        
+    # Set what magnitude will be measured in each channel    
+    chans = []
+    if channels[0]!='None':
+        zi.scope_channel1_input.set(UHFLI_read_nodes[channels[0]])
+        chans.append(1)
+        
+    if channels[1]!='None':
+        zi.scope_channel2_input.set(UHFLI_read_nodes[channels[1]])
+        chans.append(2)
+        
+    if channels[0]=='None' and channels[1]=='None':
+        raise Exception('Specify what parameter(s) you want to measure')
+        
+    zi.scope_channels.set(sum(chans))  # 1: Chan1 only, 2: Chan2 only, 3: Chan1 + Chan2
+    
+    # Check that scope is ready to measure
+    if not zi.scope_correctly_built:
+        zi.Scope.prepare_scope()
+    
+    # Run measurement
+    scope_records = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
+    data = []
+    for channel_index, _ in enumerate(chans):
+        for _, record in enumerate(scope_records):
+
+            # Obtain array of raw data
+            data_raw = record[0]['wave'][channel_index, :]
+
+            # Reshape and average
+            trace_len = int(len(data_raw)/number_of_averages)
+            data_reshape = np.reshape(data_raw, (number_of_averages, trace_len))
+            #avg = np.mean(data_reshape, axis=0)
+            #data.append(avg)
+            
+    return np.array(data_reshape)
+
 
 
 def measure_segment_scope_reader(scope_reader, waveform, number_of_averages, process=True, **kwargs):
@@ -2350,7 +2477,7 @@ def scan2Dfast(station, scanjob, location=None, liveplotwindow=None, plotparam='
         station (object): contains all the instruments
         scanjob (scanjob_t): data for scan
         extra_metadata (None or dict): additional metadata to be included in the dataset
-        upload_wave (Bool): if True the pulsedata will be upladed to the AWG # added 20200806 byb Josip
+        upload_wave (Bool): if True the pulsedata will be upladed to the AWG # added 20200806 by Josip
     Returns:
         alldata (DataSet): contains the measurement data and metadata
     """
@@ -2490,6 +2617,7 @@ def scan2Dfast(station, scanjob, location=None, liveplotwindow=None, plotparam='
             time.sleep(wait_time_startscan)
         else:
             time.sleep(wait_time)
+
         data = measuresegment(waveform, Naverage, minstrhandle, read_ch)
         for idm, mname in enumerate(measure_names):
             alldata.arrays[mname].ndarray[ix] = data[idm]
