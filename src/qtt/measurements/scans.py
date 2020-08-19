@@ -2194,10 +2194,10 @@ def measure_segment_uhfli_AWG_sync(zi, waveform, virtual_awg, channels, number_o
             # Reshape and average
             trace_len = int(len(data_raw)/number_of_averages)
             data_reshape = np.reshape(data_raw, (number_of_averages, trace_len))
-            #avg = np.mean(data_reshape, axis=0)
-            #data.append(avg)
+            avg = np.mean(data_reshape, axis=1) 
+            data.append(avg)
             
-    return np.array(data_reshape)
+    return np.array(data)
 
 
 
