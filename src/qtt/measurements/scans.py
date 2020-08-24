@@ -2032,7 +2032,53 @@ def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records
     scopeModule.finish()
     virt_awg.stop() # Switch the AWG execution off
     wave_nodepath = '/{}/scopes/0/wave'.format(device)
-    return data[wave_nodepath][:number_of_records]    
+    return data[wave_nodepath][:number_of_records]   
+
+
+
+def get_uhfli_scope_records_AWG_sync_multiple(device, daq, scopeModule, number_of_records=1, timeout=30, virt_awg = None, ):
+    """
+    Added by Josip on 20200824
+    Difference to get_uhfli_scope_records_AWG_sync function is that this one takes data during multiple awg waveforms 
+    and then divides them into equivalent scope records each of which is consisited of Nsegments segments
+    Obtain scope records from the device using an instance of the Scope Module.
+
+    
+    """
+    # Enable the scope: Now the scope is ready to record data upon receiving triggers.
+    if virt_awg == None:
+        raise Exception('The virtual awg instance has to be passed')
+    scopeModule.set('scopeModule/mode', 1)
+    scopeModule.subscribe('/' + device + '/scopes/0/wave')
+    # 'single' : only get a single scope record.
+    #   0 - acquire continuous records
+    #   1 - acquire a single record
+    daq.setInt('/%s/scopes/0/single' % device, 1)
+    # We additionally need to start the scope: Now the scope is ready to record data upon receiving triggers.
+    daq.setInt('/%s/scopes/0/enable' % device, 1)
+    scopeModule.execute()
+    virt_awg.run() # Starting the AWG after the scope is armed
+    # Wait until the Scope Module has received and processed the desired number of records.
+    start = time.time()
+    records = 0
+    progress = 0
+    while progress < 1.0:
+        records = scopeModule.getInt("scopeModule/records")
+        progress = scopeModule.progress()[0]
+        if (time.time() - start) > timeout:
+            # Break out of the loop if for some reason we're no longer receiving scope data from the device.
+            logging.warning(
+                "\nScope Module did not return {} records after {} s - forcing stop.".format(number_of_records,
+                                                                                             timeout))
+            break
+    daq.setInt('/%s/scopes/0/enable' % device, 0)
+    # Read out the scope data from the module.
+    data = scopeModule.read(True)
+    # Stop the module; to use it again we need to call execute().
+    scopeModule.finish()
+    virt_awg.stop() # Switch the AWG execution off
+    wave_nodepath = '/{}/scopes/0/wave'.format(device)
+    return data[wave_nodepath][:number_of_records]  
 
 
 def measure_segment_uhfli(zi, waveform, channels, number_of_averages=1, **kwargs):
