@@ -2036,50 +2036,6 @@ def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records
 
 
 
-def get_uhfli_scope_records_AWG_sync_multiple(device, daq, scopeModule, number_of_records=1, timeout=30, virt_awg = None, ):
-    """
-    Added by Josip on 20200824
-    Difference to get_uhfli_scope_records_AWG_sync function is that this one takes data during multiple awg waveforms 
-    and then divides them into equivalent scope records each of which is consisited of Nsegments segments
-    Obtain scope records from the device using an instance of the Scope Module.
-
-    
-    """
-    # Enable the scope: Now the scope is ready to record data upon receiving triggers.
-    if virt_awg == None:
-        raise Exception('The virtual awg instance has to be passed')
-    scopeModule.set('scopeModule/mode', 1)
-    scopeModule.subscribe('/' + device + '/scopes/0/wave')
-    # 'single' : only get a single scope record.
-    #   0 - acquire continuous records
-    #   1 - acquire a single record
-    daq.setInt('/%s/scopes/0/single' % device, 1)
-    # We additionally need to start the scope: Now the scope is ready to record data upon receiving triggers.
-    daq.setInt('/%s/scopes/0/enable' % device, 1)
-    scopeModule.execute()
-    virt_awg.run() # Starting the AWG after the scope is armed
-    # Wait until the Scope Module has received and processed the desired number of records.
-    start = time.time()
-    records = 0
-    progress = 0
-    while progress < 1.0:
-        records = scopeModule.getInt("scopeModule/records")
-        progress = scopeModule.progress()[0]
-        if (time.time() - start) > timeout:
-            # Break out of the loop if for some reason we're no longer receiving scope data from the device.
-            logging.warning(
-                "\nScope Module did not return {} records after {} s - forcing stop.".format(number_of_records,
-                                                                                             timeout))
-            break
-    daq.setInt('/%s/scopes/0/enable' % device, 0)
-    # Read out the scope data from the module.
-    data = scopeModule.read(True)
-    # Stop the module; to use it again we need to call execute().
-    scopeModule.finish()
-    virt_awg.stop() # Switch the AWG execution off
-    wave_nodepath = '/{}/scopes/0/wave'.format(device)
-    return data[wave_nodepath][:number_of_records]  
-
 
 def measure_segment_uhfli(zi, waveform, channels, number_of_averages=1, **kwargs):
     """ 
@@ -2196,21 +2152,8 @@ def measure_segment_uhfli_AWG_sync(zi, Segment_duration, virtual_awg, channels,n
     """
     
     zi.scope_duration.set(Segment_duration)  # seconds
-    fs = zi.scope_samplingrate_float.get() # Get the sampling rate
-    tot_samples_in_trace = Segment_duration*fs*number_of_segments*number_of_avgs # Total number of samples recorded per one measurement trace
-    # tot_samples_in_trace should be less than the UHFLI buffer size (to be on the safe side less then a half of it)
-    half_buffer_size = 64e6 # Samples
-    fit_ratio = np.ceil(tot_samples_in_trace/half_buffer_size) # How many times the total number of samples per trace is higher than the buffer, runded up to be on the safe side
-
-    number_of_avgs_inner = int(number_of_avgs/fit_ratio)   # Number of averages that will be averaged inside get_uhfli_scope_records_AWG_sync
-    number_of_avgs_outer = number_of_avgs_inner*fit_ratio  # Number of times the get_uhfli_scope_records_AWG_sync will be called
     
-    # Set the number of segments in case that number_of_averages is different from zero
-    if number_of_segments != 1:
-        zi.scope_segments.set('ON')
-        zi.scope_segments_count.set(number_of_segments)
-    else:
-        zi.scope_segments.set('OFF')
+
 
     UHFLI_read_nodes = {0:'Signal Input 1',1:'Signal Input 2',
         2:'Demod 1 X',3:'Demod 1 Y',
@@ -2263,6 +2206,120 @@ def measure_segment_uhfli_AWG_sync(zi, Segment_duration, virtual_awg, channels,n
                 avg = np.mean(data_reshape, axis=1) 
                 data.append(avg)
                 #data_raw_list.append(data_raw)
+        # Averages along averages
+        data_out.append(np.mean(data, axis=0)) 
+   
+    return np.array(data_out)#, np.array(data_raw_list)  data_raw_list is left for the future dealing with histograms of single shots 
+
+
+
+
+def measure_segment_uhfli_AWG_sync_multiple(zi, Segment_duration, virtual_awg, channels,number_of_avgs = 5, number_of_segments=1, **kwargs):
+    """ 
+    Measure block data with Zurich Instruments UHFLI
+
+    Added by Josip 20200824
+    Difference to measure_segment_uhfli_AWG_sync is in the division of number_of_avgs into number_of_avgs_inner and number_of_avgs_outer.
+    number_of_avgs_inner are now obtaioned inside a single call of get_uhfli_scope_records_AWG_sync. The returne data structure from the 
+    get_uhfli_scope_records_AWG_sync function and latter processing of it is the same as in measure_segment_uhfli_AWG_sync.
+
+    
+
+    Args:
+        zi (ZIUHFL): Instance of QCoDeS driver for  ZI UHF-LI
+        waveform (dict): Information about the waveform that is to be collected
+        channels (list): List of channels to read from, can be 1, 2 or both.
+        input_signal (list): List of the input signals to read in each channel.
+        
+        Possible values : 'Signal Input 1','Signal Input 2','Trig Input 1',
+        'Trig Input 2','Aux Output 1','Aux Output 2','Aux Output 3'',
+        'Aux Output 4','Aux In 1 Ch 1','Aux In 1 Ch 2','Osc phi Demod 4',
+        'osc phi Demod 8','AU Cartesian 1','AU Cartesian 2','AU Polar 1',
+        'AU Polar 2','Demod 1 X','Demod 1 Y'','Demod 1 R','Demod 1 Phase',
+        'Demod 2 X','Demod 2 Y','Demod 2 R','Demod 2 Phase','Demod 3 X',
+        'Demod 3 Y','Demod 3 R','Demod 3 Phase','Demod 4 X','Demod 4 Y',
+        'Demod 4 R','Demod 4 Phase','Demod 5 X','Demod 5 Y','Demod 5 R',
+        'Demod 5 Phase','Demod 6 X','Demod 6 Y','Demod 6 R','Demod 6 Phase',
+        'Demod 7 X','Demod 7 Y','Demod 7 R','Demod 7 Phase','Demod 8 X',
+        'Demod 8 Y','Demod 8 R','Demod 8 Phase'
+        
+        number_of_averages (int) : Number of times the sample is collected
+    Returns:
+        data (numpy array): An array of arrays, one array per input channel.
+
+    """
+    
+    zi.scope_duration.set(Segment_duration)  # seconds
+    fs = zi.scope_samplingrate_float.get() # Get the sampling rate
+    tot_samples_in_trace = Segment_duration*fs*number_of_segments*number_of_avgs # Total number of samples recorded per one measurement trace
+    # tot_samples_in_trace should be less than the UHFLI buffer size (to be on the safe side less then a half of it)
+    half_buffer_size = 150e3 # Samples
+    fit_ratio = np.ceil(tot_samples_in_trace/half_buffer_size) # How many times the total number of samples per trace is higher than the buffer, runded up to be on the safe side
+
+    number_of_avgs_inner = int(number_of_avgs/fit_ratio)   # Number of averages that will be averaged inside get_uhfli_scope_records_AWG_sync
+    number_of_avgs_outer = int(number_of_avgs_inner*fit_ratio)  # Number of times the get_uhfli_scope_records_AWG_sync will be called
+
+    
+    # Set the number of segments in case that number_of_averages is different from zero
+    if number_of_segments != 1:
+        zi.scope_segments.set('ON')
+        zi.scope_segments_count.set(number_of_segments*number_of_avgs_inner)
+    else:
+        zi.scope_segments.set('OFF')
+
+    UHFLI_read_nodes = {0:'Signal Input 1',1:'Signal Input 2',
+        2:'Demod 1 X',3:'Demod 1 Y',
+        4:'Demod 1 R',5:'Demod 1 Phase',6:'Demod 8 X',
+        7:'Demod 4 X',8:'Demod 4 Y',
+        9:'Demod 4 R',10:'Demod 4 Phase',11:'Demod 8 X',
+        12:'Demod 8 Y',13:'Demod 8 R',14:'Demod 8 Phase'}
+        
+    # Set what magnitude will be measured in each channel    
+    chans = []
+    if channels[0]!='None':
+        zi.scope_channel1_input.set(UHFLI_read_nodes[channels[0]])
+        chans.append(1)
+        
+    if channels[1]!='None':
+        zi.scope_channel2_input.set(UHFLI_read_nodes[channels[1]])
+        chans.append(2)
+        
+    if channels[0]=='None' and channels[1]=='None':
+        raise Exception('Specify what parameter(s) you want to measure')
+        
+    zi.scope_channels.set(sum(chans))  # 1: Chan1 only, 2: Chan2 only, 3: Chan1 + Chan2
+    
+    # Check that scope is ready to measure
+    if not zi.scope_correctly_built:
+        zi.Scope.prepare_scope()
+    
+    # Run measurement
+    scope_records =[]
+    for ii in range(number_of_avgs_outer):
+        scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
+        scope_records.append(scope_record)
+
+    data_out = []
+    #data_raw_list = []
+    for channel_index, _ in enumerate(chans):
+        data = []
+        for kk in scope_records:
+            for _, record in enumerate(kk):
+    
+            
+    
+                # Obtain array of raw data and reshape it because we have number_of_avgs_inner muliple experimetal sequences in one scope record
+                data_raw_total = record[0]['wave'][channel_index, :]
+                exp_sequence_len = int(len(data_raw_total)/number_of_avgs_inner) # The lenght of one experimental sequence 
+                data_raw_total = np.reshape(data_raw_total, (number_of_avgs_inner, exp_sequence_len))
+                for data_raw in data_raw_total:
+                    # Reshape and average
+                    trace_len = int(len(data_raw)/number_of_segments)
+                    data_reshape = np.reshape(data_raw, (number_of_segments, trace_len))
+                    # Averages along each segment
+                    avg = np.mean(data_reshape, axis=1) 
+                    data.append(avg)
+                    #data_raw_list.append(data_raw)
         # Averages along averages
         data_out.append(np.mean(data, axis=0)) 
    
