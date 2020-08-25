@@ -2890,7 +2890,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
             #gates.set(sweepdata['paramname'], float(sweepgate_value))
         
 
-    data = measure_segment_uhfli_AWG_sync(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, number_of_segments = Nsegments)
+    data = measure_segment_uhfli_AWG_sync_multiple(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, number_of_segments = Nsegments)
 
     if len(read_ch) == 1:
         measure_names = ['measured']
@@ -2948,7 +2948,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
         else:
             time.sleep(wait_time)
 
-        data = measure_segment_uhfli_AWG_sync(minstrhandle, Segment_duration, virtual_awg, read_ch,number_of_avgs = Naverage, number_of_segments= Nsegments)
+        data = measure_segment_uhfli_AWG_sync_multiple(minstrhandle, Segment_duration, virtual_awg, read_ch,number_of_avgs = Naverage, number_of_segments= Nsegments)
         for idm, mname in enumerate(measure_names):
             alldata.arrays[mname].ndarray[ix] = data[idm]
 
