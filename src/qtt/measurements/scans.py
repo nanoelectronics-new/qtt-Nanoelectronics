@@ -2253,11 +2253,13 @@ def measure_segment_uhfli_AWG_sync_multiple(zi, Segment_duration, virtual_awg, c
     fs = zi.scope_samplingrate_float.get() # Get the sampling rate
     tot_samples_in_trace = Segment_duration*fs*number_of_segments*number_of_avgs # Total number of samples recorded per one measurement trace
     # tot_samples_in_trace should be less than the UHFLI buffer size (to be on the safe side less then a half of it)
-    half_buffer_size = 150e3 # Samples
+    half_buffer_size = 64e6 # Samples
     fit_ratio = np.ceil(tot_samples_in_trace/half_buffer_size) # How many times the total number of samples per trace is higher than the buffer, runded up to be on the safe side
 
     number_of_avgs_inner = int(number_of_avgs/fit_ratio)   # Number of averages that will be averaged inside get_uhfli_scope_records_AWG_sync
-    number_of_avgs_outer = int(number_of_avgs_inner*fit_ratio)  # Number of times the get_uhfli_scope_records_AWG_sync will be called
+    number_of_avgs_outer = int(fit_ratio)  # Number of times the get_uhfli_scope_records_AWG_sync will be called
+    print('number_of_avgs_inner',number_of_avgs_inner)
+    print('number_of_avgs_outer',number_of_avgs_outer)
 
     
     # Set the number of segments in case that number_of_averages is different from zero
@@ -2310,8 +2312,10 @@ def measure_segment_uhfli_AWG_sync_multiple(zi, Segment_duration, virtual_awg, c
     
                 # Obtain array of raw data and reshape it because we have number_of_avgs_inner muliple experimetal sequences in one scope record
                 data_raw_total = record[0]['wave'][channel_index, :]
+                #plt.plot(data_raw_total)
                 exp_sequence_len = int(len(data_raw_total)/number_of_avgs_inner) # The lenght of one experimental sequence 
                 data_raw_total = np.reshape(data_raw_total, (number_of_avgs_inner, exp_sequence_len))
+
                 for data_raw in data_raw_total:
                     # Reshape and average
                     trace_len = int(len(data_raw)/number_of_segments)
