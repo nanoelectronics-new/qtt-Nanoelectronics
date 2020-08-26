@@ -2152,6 +2152,13 @@ def measure_segment_uhfli_AWG_sync(zi, Segment_duration, virtual_awg, channels,n
     """
     
     zi.scope_duration.set(Segment_duration)  # seconds
+
+    # Set the number of segments in case that number_of_averages is different from zero
+    if number_of_segments != 1:
+        zi.scope_segments.set('ON')
+        zi.scope_segments_count.set(number_of_segments)
+    else:
+        zi.scope_segments.set('OFF')
     
 
 
@@ -2184,9 +2191,9 @@ def measure_segment_uhfli_AWG_sync(zi, Segment_duration, virtual_awg, channels,n
     # Run measurement
     scope_records =[]
     for ii in range(number_of_avgs):
+
         scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
         scope_records.append(scope_record)
-
     data_out = []
     #data_raw_list = []
     for channel_index, _ in enumerate(chans):
@@ -2258,8 +2265,6 @@ def measure_segment_uhfli_AWG_sync_multiple(zi, Segment_duration, virtual_awg, c
 
     number_of_avgs_inner = int(number_of_avgs/fit_ratio)   # Number of averages that will be averaged inside get_uhfli_scope_records_AWG_sync
     number_of_avgs_outer = int(fit_ratio)  # Number of times the get_uhfli_scope_records_AWG_sync will be called
-    print('number_of_avgs_inner',number_of_avgs_inner)
-    print('number_of_avgs_outer',number_of_avgs_outer)
 
     
     # Set the number of segments in case that number_of_averages is different from zero
