@@ -2958,6 +2958,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
             alldata.arrays[mname].ndarray[ix] = data[idm]
 
         delta, tprev, update = _delta_time(tprev, thr=1.)
+        print('Time left: %.3f seconds'%((len(stepvalues)-ix)*delta))
         if update:
             if liveplotwindow is not None:
                 liveplotwindow.update_plot()
