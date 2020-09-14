@@ -2208,13 +2208,13 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
                                                                                  # contains one complete measurement map 
                 # Averages ampongst different measurement maps
                 avg = np.mean(data_reshape, axis=0) 
-                # Due to the rounding, one scope segment duration might not be exactly num_rows*num_cols, do here we acoount for that
-                col_len = int(np.floor(len(avg)/num_rows))
-                avg = avg [:(col_len*num_rows)] # Truncating the data vector to be reshapable 
-                avg = np.reshape(avg, (num_rows, col_len)) # Unwrap a single measurement map 
+                avg = avg [:((num_rows-1)*num_cols)] # Truncating the data of one measurement map to one row less
+                                                     # because the error in rounding causes the total
+                                                     # number of elements to be less then num_rows*num_cols
+
+                avg = np.reshape(avg, ((num_rows-1), num_cols)) # Unwrap a single measurement map 
   
         data_out.append(avg) # There are two channels
-
     return np.array(data_out)
 
 
