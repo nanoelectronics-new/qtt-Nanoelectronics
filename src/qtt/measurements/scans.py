@@ -2120,6 +2120,104 @@ def measure_segment_uhfli(zi, waveform, channels, number_of_averages=1, **kwargs
     return np.array(data)
 
 
+def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,number_of_avgs = 5, resolution = [96,96], **kwargs):
+    """ 
+    Aded by Jaime  and Josip 20200914
+    Measure block data with Zurich Instruments UHFLI
+
+    Args:
+        zi (ZIUHFL): Instance of QCoDeS driver for  ZI UHF-LI
+        waveform (dict): Information about the waveform that is to be collected
+        channels (list): List of channels to read from, can be 1, 2 or both.
+        input_signal (list): List of the input signals to read in each channel.
+        
+        Possible values : 'Signal Input 1','Signal Input 2','Trig Input 1',
+        'Trig Input 2','Aux Output 1','Aux Output 2','Aux Output 3'',
+        'Aux Output 4','Aux In 1 Ch 1','Aux In 1 Ch 2','Osc phi Demod 4',
+        'osc phi Demod 8','AU Cartesian 1','AU Cartesian 2','AU Polar 1',
+        'AU Polar 2','Demod 1 X','Demod 1 Y'','Demod 1 R','Demod 1 Phase',
+        'Demod 2 X','Demod 2 Y','Demod 2 R','Demod 2 Phase','Demod 3 X',
+        'Demod 3 Y','Demod 3 R','Demod 3 Phase','Demod 4 X','Demod 4 Y',
+        'Demod 4 R','Demod 4 Phase','Demod 5 X','Demod 5 Y','Demod 5 R',
+        'Demod 5 Phase','Demod 6 X','Demod 6 Y','Demod 6 R','Demod 6 Phase',
+        'Demod 7 X','Demod 7 Y','Demod 7 R','Demod 7 Phase','Demod 8 X',
+        'Demod 8 Y','Demod 8 R','Demod 8 Phase'
+        
+        number_of_averages (int) : Number of times the sample is collected
+    Returns:
+        data (numpy array): An array of arrays, one array per input channel.
+
+    """
+    
+    zi.scope_duration.set(Segment_duration)  # seconds
+
+    # Set the number of segments in case that number_of_averages is different from zero
+    
+    zi.scope_segments.set('ON')
+    zi.scope_segments_count.set(number_of_avgs)
+
+    
+    num_rows = int(resolution[0])
+    num_cols = int(resolution[1])
+
+    UHFLI_read_nodes = {0:'Signal Input 1',1:'Signal Input 2',
+        2:'Demod 1 X',3:'Demod 1 Y',
+        4:'Demod 1 R',5:'Demod 1 Phase',6:'Demod 8 X',
+        7:'Demod 4 X',8:'Demod 4 Y',
+        9:'Demod 4 R',10:'Demod 4 Phase',11:'Demod 8 X',
+        12:'Demod 8 Y',13:'Demod 8 R',14:'Demod 8 Phase'}
+        
+    # Set what magnitude will be measured in each channel    
+    chans = []
+    if channels[0]!='None':
+        zi.scope_channel1_input.set(UHFLI_read_nodes[channels[0]])
+        chans.append(1)
+        
+    if channels[1]!='None':
+        zi.scope_channel2_input.set(UHFLI_read_nodes[channels[1]])
+        chans.append(2)
+        
+    if channels[0]=='None' and channels[1]=='None':
+        raise Exception('Specify what parameter(s) you want to measure')
+        
+    zi.scope_channels.set(sum(chans))  # 1: Chan1 only, 2: Chan2 only, 3: Chan1 + Chan2
+    
+    # Check that scope is ready to measure
+    if not zi.scope_correctly_built:
+        zi.Scope.prepare_scope()
+    
+    # Run measurement
+    scope_records =[]
+    for ii in range(1):
+
+        scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
+        scope_records.append(scope_record)
+    data_out = []
+    for channel_index, _ in enumerate(chans):
+        for kk in scope_records:
+            for _, record in enumerate(kk):
+    
+            
+    
+                # Obtain array of raw data
+                data_raw = record[0]['wave'][channel_index, :]
+    
+                # Reshape and average
+                trace_len = int(len(data_raw)/number_of_avgs)
+                data_reshape = np.reshape(data_raw, (number_of_avgs, trace_len)) # Now each row in data_reshape 
+                                                                                 # contains one complete measurement map 
+                # Averages ampongst different measurement maps
+                avg = np.mean(data_reshape, axis=0) 
+                # Due to the rounding, one scope segment duration might not be exactly num_rows*num_cols, do here we acoount for that
+                col_len = int(np.floor(len(avg)/num_rows))
+                avg = avg [:(col_len*num_rows)] # Truncating the data vector to be reshapable 
+                avg = np.reshape(avg, (num_rows, col_len)) # Unwrap a single measurement map 
+  
+        data_out.append(avg) # There are two channels
+
+    return np.array(data_out)
+
+
 
 
 def measure_segment_uhfli_AWG_sync(zi, Segment_duration, virtual_awg, channels,number_of_avgs = 5, number_of_segments=1, **kwargs):
@@ -3129,7 +3227,6 @@ def scan2Dturbo(station, scanjob, location=None, liveplotwindow=None, delete=Tru
 
     stepdata = scanjob['stepdata']
     sweepdata = scanjob['sweepdata']
-
     Naverage = scanjob.get('Naverage', 20)
     resolution = scanjob.get('resolution', [96, 96])
 
@@ -3145,11 +3242,11 @@ def scan2Dturbo(station, scanjob, location=None, liveplotwindow=None, delete=Tru
     else:
         sweepranges = [sweepdata['range'], stepdata['range']]
 
-    is_m4i = _is_m4i(minstrhandle)
-    if not is_m4i:
-        raise Exception('Unrecognized fast readout instrument %s' % minstrhandle)
+    #is_m4i = _is_m4i(minstrhandle)
+    #if not is_m4i:
+    #    raise Exception('Unrecognized fast readout instrument %s' % minstrhandle)
 
-    samp_freq = minstrhandle.sample_rate()
+    samp_freq = minstrhandle.scope_samplingrate_float()
     resolution[0] = np.ceil(resolution[0] / 16) * 16
 
     if scanjob['scantype'] == 'scan2Dturbo':
@@ -3178,7 +3275,8 @@ def scan2Dturbo(station, scanjob, location=None, liveplotwindow=None, delete=Tru
                                                              resolution, delete=delete)
 
     time.sleep(wait_time_startscan)
-    data = measuresegment(waveform, Naverage, minstrhandle, read_ch)
+
+    data = measure_segment_uhfli_AWG_turbo(minstrhandle, period, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = resolution)
     scan2Dturbo._data = data
 
     if virtual_awg:
