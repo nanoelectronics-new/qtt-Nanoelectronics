@@ -108,9 +108,9 @@ class VideoModeProcessor(ABC):
 
         if isinstance(measurement_instrument_handle, AcquisitionScopeInterface):
             return 'AcquisitionScopeInterface'
-        elif measurement_instrument_handle.name in ['digitizer', 'm4i']:
+        elif measurement_instrument_handle.name in ['m4i']:
             return 'm4i'
-        elif measurement_instrument_handle.name in ['ZIUHFLI', 'ziuhfli']:
+        elif measurement_instrument_handle.name in ['digitizer','ZIUHFLI', 'ziuhfli']:
             return 'ziuhfli'
         else:
             return 'other'
@@ -290,9 +290,11 @@ class VideomodeSawtoothMeasurement(VideoModeProcessor):
         else:
             device_parameters = {}
         self._device_parameters = device_parameters
-        data = qtt.measurements.scans.measuresegment(
-            self.waveform, videomode.Naverage(), self.minstrumenthandle, self.unique_channels,
-            **self.measuresegment_arguments, device_parameters=device_parameters)
+
+        sampling_frequency = qtt.measurements.scans.get_sampling_frequency(self.minstrumenthandle)
+        base_period = 1. / sampling_frequency
+        total_period = base_period * np.prod(self.resolution)
+        data = qtt.measurements.scans.measure_segment_uhfli_AWG_turbo(self.minstrumenthandle, total_period, self.station.virtual_awg, self.unique_channels,number_of_avgs = videomode.Naverage(), resolution = self.resolution)
         if np.all(data == 0):
             raise Exception('data returned contained only zeros, aborting')
 
