@@ -2227,7 +2227,7 @@ def measure_segment_uhfli_AWG_sync_multiple(zi, Segment_duration, virtual_awg, c
 
     Added by Josip 20200824
     Difference to measure_segment_uhfli_AWG_sync is in the division of number_of_avgs into number_of_avgs_inner and number_of_avgs_outer.
-    number_of_avgs_inner are now obtaioned inside a single call of get_uhfli_scope_records_AWG_sync. The returne data structure from the 
+    number_of_avgs_inner are now obtaioned inside a single call of get_uhfli_scope_records_AWG_sync. The return data structure from the 
     get_uhfli_scope_records_AWG_sync function and latter processing of it is the same as in measure_segment_uhfli_AWG_sync.
 
     
