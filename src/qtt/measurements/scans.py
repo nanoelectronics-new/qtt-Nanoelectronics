@@ -2156,9 +2156,9 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
     zi.scope_segments.set('ON')
     zi.scope_segments_count.set(number_of_avgs)
 
-    
-    num_rows = int(resolution[0])
-    num_cols = int(resolution[1])
+    if resolution != None: # if the resolution is passed the user expect 2D map as a funtion output
+        num_rows = int(resolution[0])
+        num_cols = int(resolution[1])
 
     UHFLI_read_nodes = {0:'Signal Input 1',1:'Signal Input 2',
         2:'Demod 1 X',3:'Demod 1 Y',
@@ -2208,11 +2208,13 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
                                                                                  # contains one complete measurement map 
                 # Averages ampongst different measurement maps
                 avg = np.mean(data_reshape, axis=0) 
-                avg = avg [:((num_rows-1)*num_cols)] # Truncating the data of one measurement map to one row less
-                                                     # because the error in rounding causes the total
-                                                     # number of elements to be less then num_rows*num_cols
 
-                avg = np.reshape(avg, ((num_rows-1), num_cols)) # Unwrap a single measurement map 
+                if resolution != None: # if the resolution is passed the user expect 2D map as a funtion output
+                    avg = avg [:((num_rows-1)*num_cols)] # Truncating the data of one measurement map to one row less
+                                                         # because the error in rounding causes the total
+                                                         # number of elements to be less then num_rows*num_cols
+    
+                    avg = np.reshape(avg, ((num_rows-1), num_cols)) # Unwrap a single measurement map 
   
         data_out.append(avg) # There are two channels
     return np.array(data_out)
@@ -2957,7 +2959,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
         scanjob['scantype'] = 'scan2Dfast'
 
     Segment_duration = scanjob['sweepdata']['segment_duration']
-    Nsegments = len(np.arange(scanjob['sweepdata']['start'], scanjob['sweepdata']['end'], scanjob['sweepdata']['step']))
+    #Nsegments = len(np.arange(scanjob['sweepdata']['start'], scanjob['sweepdata']['end'], scanjob['sweepdata']['step']))
     Naverage = scanjob.get('Naverage', 20)
     stepdata = scanjob['stepdata']
     sweepdata = scanjob['sweepdata']
@@ -2993,8 +2995,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
             #gates.set(sweepdata['paramname'], float(sweepgate_value))
         
 
-    data = measure_segment_uhfli_AWG_sync_multiple(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, number_of_segments = Nsegments)
-
+    data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
     if len(read_ch) == 1:
         measure_names = ['measured']
     else:
@@ -3051,7 +3052,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
         else:
             time.sleep(wait_time)
 
-        data = measure_segment_uhfli_AWG_sync_multiple(minstrhandle, Segment_duration, virtual_awg, read_ch,number_of_avgs = Naverage, number_of_segments= Nsegments)
+        data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
         for idm, mname in enumerate(measure_names):
             alldata.arrays[mname].ndarray[ix] = data[idm]
 
