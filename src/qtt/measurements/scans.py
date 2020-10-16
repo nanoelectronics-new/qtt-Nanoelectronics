@@ -3180,7 +3180,7 @@ def plotData(alldata, diff_dir=None, fig=1):
 # %%
 
 
-def scan2Dturbo(station, scanjob, location=None, liveplotwindow=None, delete=True, verbose=1):
+def scan2Dturbo(station, scanjob, location=None, liveplotwindow=None, delete=True, verbose=1, saving = True):
     """Perform a very fast 2d scan by varying two physical gates with the AWG.
 
     The function assumes the station contains an acquisition device that is supported by the measuresegment function.
@@ -3309,7 +3309,11 @@ def scan2Dturbo(station, scanjob, location=None, liveplotwindow=None, delete=Tru
     update_dictionary(alldata.metadata, scanjob=dict(scanjob),
                       dt=dt, station=station.snapshot(), allgatevalues=gatevals)
     _add_dataset_metadata(alldata)
-    alldata.write(write_metadata=True)
+    if saving == True:
+        alldata.write(write_metadata=True)
+    else:
+        print('You are not saving data')
+    
     return alldata, waveform, sweep_info
 
 
