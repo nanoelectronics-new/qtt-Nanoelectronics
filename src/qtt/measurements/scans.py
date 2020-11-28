@@ -2120,7 +2120,9 @@ def measure_segment_uhfli(zi, waveform, channels, number_of_averages=1, **kwargs
     return np.array(data)
 
 
-def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,number_of_avgs = 5, resolution = [96,96], **kwargs):
+
+# New version of the function
+def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels, number_of_avgs = 5, resolution = [96,96], **kwargs):
     """ 
     Aded by Jaime  and Josip 20200914
     Measure block data with Zurich Instruments UHFLI
@@ -2148,13 +2150,20 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
         data (numpy array): An array of arrays, one array per input channel.
 
     """
-    
-    zi.scope_duration.set(Segment_duration)  # seconds
 
-    # Set the number of segments in case that number_of_averages is different from zero
-    
+    zi.scope_duration.set(Segment_duration)  # seconds
+    fs = zi.scope_samplingrate_float.get() # Get the sampling rate
+    tot_samples_in_trace = Segment_duration*fs*number_of_avgs # Total number of samples recorded per one measurement trace
+    # tot_samples_in_trace should be less than the UHFLI buffer size (to be on the safe side less then a half of it)
+    half_buffer_size = 64e6 # Samples
+    fit_ratio = np.ceil(tot_samples_in_trace/half_buffer_size) # How many times the total number of samples per trace is higher than the buffer, runded up to be on the safe side
+
+    number_of_avgs_inner = int(number_of_avgs/fit_ratio)   # Number of averages that will be averaged inside get_uhfli_scope_records_AWG_sync
+    number_of_avgs_outer = int(fit_ratio)  # Number of times the get_uhfli_scope_records_AWG_sync will be called
+
+
     zi.scope_segments.set('ON')
-    zi.scope_segments_count.set(number_of_avgs)
+    zi.scope_segments_count.set(number_of_avgs_inner)
 
     if resolution != None: # if the resolution is passed the user expect 2D map as a funtion output
         num_rows = int(resolution[0])
@@ -2188,12 +2197,13 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
     
     # Run measurement
     scope_records =[]
-    for ii in range(1):
+    for ii in range(number_of_avgs_outer):
 
         scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
         scope_records.append(scope_record)
     data_out = []
     for channel_index, _ in enumerate(chans):
+        data = []
         for kk in scope_records:
             for _, record in enumerate(kk):
     
@@ -2203,10 +2213,10 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
                 data_raw = record[0]['wave'][channel_index, :]
     
                 # Reshape and average
-                trace_len = int(len(data_raw)/number_of_avgs)
-                data_reshape = np.reshape(data_raw, (number_of_avgs, trace_len)) # Now each row in data_reshape 
+                trace_len = int(len(data_raw)/number_of_avgs_inner)
+                data_reshape = np.reshape(data_raw, (number_of_avgs_inner, trace_len)) # Now each row in data_reshape 
                                                                                  # contains one complete measurement map 
-                # Averages ampongst different measurement maps
+                # Averages amongst different measurement maps
                 avg = np.mean(data_reshape, axis=0) 
 
                 if resolution != None: # if the resolution is passed the user expect 2D map as a funtion output
@@ -2215,8 +2225,8 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
                                                          # number of elements to be less then num_rows*num_cols
     
                     avg = np.reshape(avg, ((num_rows-1), num_cols)) # Unwrap a single measurement map 
-  
-        data_out.append(avg) # There are two channels
+                data.append(avg) # Adding rows in data which correspond to number_of_avgs_outer
+        data_out.append(np.mean(data, axis=0)) # Here the mean function does averages along number_of_avgs_outer
     return np.array(data_out)
 
 
