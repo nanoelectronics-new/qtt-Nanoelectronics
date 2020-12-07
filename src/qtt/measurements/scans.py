@@ -1992,7 +1992,7 @@ def get_uhfli_scope_records(device, daq, scopeModule, number_of_records=1, timeo
 
 
 
-def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records=1, timeout=30, virt_awg = None):
+def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records=1, timeout=120, virt_awg = None):
     """
     Modified by Jaime 2972020
     Obtain scope records from the device using an instance of the Scope Module.
@@ -3115,7 +3115,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
     _add_dataset_metadata(alldata)
 
     if saving == True:
-        alldata.write(write_metadata=True)
+        alldata.write(write_metadata=False)
     else:
         print('You are not saving data')
 
