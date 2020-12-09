@@ -13,6 +13,7 @@ from typing import Any, Type, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.ma as ma
 import pyqtgraph
 import qcodes
 import skimage
@@ -2174,7 +2175,8 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
         4:'Demod 1 R',5:'Demod 1 Phase',6:'Demod 8 X',
         7:'Demod 4 X',8:'Demod 4 Y',
         9:'Demod 4 R',10:'Demod 4 Phase',11:'Demod 8 X',
-        12:'Demod 8 Y',13:'Demod 8 R',14:'Demod 8 Phase'}
+        12:'Demod 8 Y',13:'Demod 8 R',14:'Demod 8 Phase',
+        15:'Trig Input 2'}
         
     # Set what magnitude will be measured in each channel    
     chans = []
@@ -2227,6 +2229,123 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
                     avg = np.reshape(avg, ((num_rows-1), num_cols)) # Unwrap a single measurement map 
                 data.append(avg) # Adding rows in data which correspond to number_of_avgs_outer
         data_out.append(np.mean(data, axis=0)) # Here the mean function does averages along number_of_avgs_outer
+    return np.array(data_out)
+
+
+
+
+def measure_segment_uhfli_consequtive_averages(zi, Segment_duration, num_of_segments, virtual_awg, channels, number_of_avgs = 5, **kwargs):
+    """ 
+    Added by Josip 20201208
+    This function is modified measure_segment_uhfli_AWG_turbo. In measure_segment_uhfli_AWG_turbo, 
+    Segment_duration equals to one horizontal experimental trace (e.g. full mixing time sweep) and number_of_avgs
+    equals the number of such traces acquired and averaged. 
+    In measure_segment_uhfli_consequtive_averages Segment duration contains number_of_avgs repeated chunks of
+    one e.g. mixing time, while we have another input variable num_of_segments which accounts for number
+    of different e.g.mixing times. This allows acquiring data, which are averaged together, in a shortest possible 
+    amount of laboratory time.
+    
+
+    Args:
+        zi (ZIUHFL): Instance of QCoDeS driver for  ZI UHF-LI
+        waveform (dict): Information about the waveform that is to be collected
+        channels (list): List of channels to read from, can be 1, 2 or both.
+        input_signal (list): List of the input signals to read in each channel.
+        
+        Possible values : 'Signal Input 1','Signal Input 2','Trig Input 1',
+        'Trig Input 2','Aux Output 1','Aux Output 2','Aux Output 3'',
+        'Aux Output 4','Aux In 1 Ch 1','Aux In 1 Ch 2','Osc phi Demod 4',
+        'osc phi Demod 8','AU Cartesian 1','AU Cartesian 2','AU Polar 1',
+        'AU Polar 2','Demod 1 X','Demod 1 Y'','Demod 1 R','Demod 1 Phase',
+        'Demod 2 X','Demod 2 Y','Demod 2 R','Demod 2 Phase','Demod 3 X',
+        'Demod 3 Y','Demod 3 R','Demod 3 Phase','Demod 4 X','Demod 4 Y',
+        'Demod 4 R','Demod 4 Phase','Demod 5 X','Demod 5 Y','Demod 5 R',
+        'Demod 5 Phase','Demod 6 X','Demod 6 Y','Demod 6 R','Demod 6 Phase',
+        'Demod 7 X','Demod 7 Y','Demod 7 R','Demod 7 Phase','Demod 8 X',
+        'Demod 8 Y','Demod 8 R','Demod 8 Phase'
+        
+        number_of_averages (int) : Number of times the sample is collected
+    Returns:
+        data (numpy array): An array of arrays, one array per input channel.
+
+    """
+
+    zi.scope_duration.set(Segment_duration)  # seconds
+    segment_length = zi.daq.getInt('/dev2169/scopes/0/length')  # Exact number of samples in one segment
+                                                                       # ! Hard coded with an exact device name and the node
+    chunk_length = int(np.floor(segment_length/number_of_avgs)) # Number of samples in one repetition of e.g. single mixing time
+    tot_samples_in_trace = segment_length*num_of_segments # Total number of samples recorded per one measurement trace
+    # tot_samples_in_trace should be less than the UHFLI buffer size (to be on the safe side less then a half of it)
+    buffer_size = 128e6 # Samples
+   
+    if tot_samples_in_trace>buffer_size:
+        raise Exception('Scope buffer exceeded. Bitte die averaging reducierung oder sonst etwas!')
+
+
+    zi.scope_segments.set('ON')
+    zi.scope_segments_count.set(int(num_of_segments))
+
+
+    UHFLI_read_nodes = {0:'Signal Input 1',1:'Signal Input 2',
+        2:'Demod 1 X',3:'Demod 1 Y',
+        4:'Demod 1 R',5:'Demod 1 Phase',6:'Demod 8 X',
+        7:'Demod 4 X',8:'Demod 4 Y',
+        9:'Demod 4 R',10:'Demod 4 Phase',11:'Demod 8 X',
+        12:'Demod 8 Y',13:'Demod 8 R',14:'Demod 8 Phase',
+        15:'Trig Input 2'}
+        
+    # Set what magnitude will be measured in each channel    
+    chans = []
+    if channels[0]!=15:
+        raise Exception('The first channel must be Trigger Input 2, used for synchronization')
+    else:
+        zi.scope_channel1_input.set(UHFLI_read_nodes[channels[0]])
+        chans.append(1)
+        
+    if channels[1]!='None':
+        zi.scope_channel2_input.set(UHFLI_read_nodes[channels[1]])
+        chans.append(2)
+        
+    if channels[0]=='None' or channels[1]=='None':
+        raise Exception('Both channels need to be specified in this case, since the first one is used for the synchronization.')
+        
+    zi.scope_channels.set(sum(chans))  # 1: Chan1 only, 2: Chan2 only, 3: Chan1 + Chan2
+    
+    # Check that scope is ready to measure
+    if not zi.scope_correctly_built:
+        zi.Scope.prepare_scope()
+    
+    # Run measurement
+    scope_records = []
+    for ii in range(1):
+        scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
+        scope_records.append(scope_record)
+
+
+    data = []
+    for kk in scope_records:
+        for _, record in enumerate(kk):
+
+            # Obtain array of raw data
+            data_sync = record[0]['wave'][0, :] # Synchronization data
+            data_exp = record[0]['wave'][1, :]  # Experimental data
+            # Reshape and average
+            data_reshaped_sync = np.reshape(data_sync, (num_of_segments, segment_length))
+            data_reshaped_exp = np.reshape(data_exp, (num_of_segments, segment_length))
+
+
+            for cnt,trc in enumerate(data_reshaped_sync):
+                mask = (trc+1)/2 # Since this is data from trigger input, after this all the values are either close to zero or close to one
+                mask = mask.round() # After this, all the values that were close to one are one and all the values that were close to zero are zero. So we have a mask.
+                exp_trc = data_reshaped_exp[cnt]
+  
+                masked_trace = ma.masked_array(exp_trc, mask=mask) # So now masked_trace is left only with values from exp_trc which are at the positions of zeros from mask. 
+                                                                   # Like this we get rid of all the unwanted spurious data like sensor pickup of experimental pulses
+                # Since exp_trc contains consecuitve repetitions of chunks to be averaged, we can average all the points inside masked_trace and this is 
+                # then a single point in our measurement.
+                data.append(masked_trace.mean())                         
+
+    data_out = [np.array(data),np.array(data)]  # Need to also return the second channel data, therefore returning the empty array 
     return np.array(data_out)
 
 
@@ -2923,7 +3042,7 @@ def scan2Dfast(station, scanjob, location=None, liveplotwindow=None, plotparam='
 
 
 def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plotparam='measured',
-               diff_dir=None, verbose=1, extra_metadata=None, saving=True, upload_wave = True):
+               diff_dir=None, verbose=1, extra_metadata=None, saving=True, upload_wave = True, con_avg = True):
     """Make a 2D scan and create qcodes dataset to store on disk.
     
     Args:
@@ -2931,6 +3050,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
         scanjob (scanjob_t): data for scan
         extra_metadata (None or dict): additional metadata to be included in the dataset
         upload_wave (Bool): if True the pulsedata will be upladed to the AWG # added 20200806 by Josip
+        con_avg (Bool): If True then measure_segment_uhfli_consequtive_averages function is used for readout
     Returns:
         alldata (DataSet): contains the measurement data and metadata
     """
@@ -3005,7 +3125,11 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
             #gates.set(sweepdata['paramname'], float(sweepgate_value))
         
 
-    data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
+    if con_avg:
+        data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
+    else:
+        data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
+
     if len(read_ch) == 1:
         measure_names = ['measured']
     else:
@@ -3061,8 +3185,12 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
             time.sleep(wait_time_startscan)
         else:
             time.sleep(wait_time)
-
-        data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
+        
+        if con_avg:
+            data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
+        else:
+            data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
+            
         for idm, mname in enumerate(measure_names):
             alldata.arrays[mname].ndarray[ix] = data[idm]
 
