@@ -1993,7 +1993,7 @@ def get_uhfli_scope_records(device, daq, scopeModule, number_of_records=1, timeo
 
 
 
-def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records=1, timeout=120, virt_awg = None):
+def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records=1, timeout=30, virt_awg = None, wait_scope = 0.2):
     """
     Modified by Jaime 2972020
     Obtain scope records from the device using an instance of the Scope Module.
@@ -2012,20 +2012,30 @@ def get_uhfli_scope_records_AWG_sync(device, daq, scopeModule, number_of_records
     # We additionally need to start the scope: Now the scope is ready to record data upon receiving triggers.
     daq.setInt('/%s/scopes/0/enable' % device, 1)
     scopeModule.execute()
+
     virt_awg.run() # Starting the AWG after the scope is armed
     # Wait until the Scope Module has received and processed the desired number of records.
     start = time.time()
     records = 0
     progress = 0
+
     while (records < number_of_records) or (progress < 1.0):
+        time.sleep(wait_scope)
         records = scopeModule.getInt("scopeModule/records")
         progress = scopeModule.progress()[0]
-        if (time.time() - start) > timeout:
+        elapsed_time = time.time() - start
+    #    #if (elapsed_time > timeout/5) and (progress == 0.0):
+    #        # Then scope has probably missed the trigger, therefore restart the AWG sequence
+    #        #virt_awg.stop()
+    #        #virt_awg.run()
+#
+        if (elapsed_time > timeout):
             # Break out of the loop if for some reason we're no longer receiving scope data from the device.
             logging.warning(
                 "\nScope Module did not return {} records after {} s - forcing stop.".format(number_of_records,
                                                                                              timeout))
             break
+
     daq.setInt('/%s/scopes/0/enable' % device, 0)
     # Read out the scope data from the module.
     data = scopeModule.read(True)
@@ -2244,6 +2254,7 @@ def measure_segment_uhfli_consequtive_averages(zi, Segment_duration, num_of_segm
     one e.g. mixing time, while we have another input variable num_of_segments which accounts for number
     of different e.g.mixing times. This allows acquiring data, which are averaged together, in a shortest possible 
     amount of laboratory time.
+    Here we do not use scope segmentation, but data of a complete scope shot is recorded in one segment.
     
 
     Args:
@@ -2269,21 +2280,20 @@ def measure_segment_uhfli_consequtive_averages(zi, Segment_duration, num_of_segm
         data (numpy array): An array of arrays, one array per input channel.
 
     """
+    scope_sampling_rate = zi.scope_samplingrate_float.get()
+    segment_length = scope_sampling_rate*Segment_duration
+    segment_length = int(segment_length)
+    tot_samples_in_trace = segment_length*num_of_segments
+    zi.scope_length.set(tot_samples_in_trace)
 
-    zi.scope_duration.set(Segment_duration)  # seconds
-    segment_length = zi.daq.getInt('/dev2169/scopes/0/length')  # Exact number of samples in one segment
-                                                                       # ! Hard coded with an exact device name and the node
-    chunk_length = int(np.floor(segment_length/number_of_avgs)) # Number of samples in one repetition of e.g. single mixing time
-    tot_samples_in_trace = segment_length*num_of_segments # Total number of samples recorded per one measurement trace
-    # tot_samples_in_trace should be less than the UHFLI buffer size (to be on the safe side less then a half of it)
+    
     buffer_size = 128e6 # Samples
    
     if tot_samples_in_trace>buffer_size:
         raise Exception('Scope buffer exceeded. Bitte die averaging reducierung oder sonst etwas!')
 
 
-    zi.scope_segments.set('ON')
-    zi.scope_segments_count.set(int(num_of_segments))
+    zi.scope_segments.set('OFF')
 
 
     UHFLI_read_nodes = {0:'Signal Input 1',1:'Signal Input 2',
@@ -2318,7 +2328,7 @@ def measure_segment_uhfli_consequtive_averages(zi, Segment_duration, num_of_segm
     # Run measurement
     scope_records = []
     for ii in range(1):
-        scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
+        scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg, timeout = 30.0, wait_scope = 2.0)
         scope_records.append(scope_record)
 
 
@@ -2333,14 +2343,13 @@ def measure_segment_uhfli_consequtive_averages(zi, Segment_duration, num_of_segm
             data_reshaped_sync = np.reshape(data_sync, (num_of_segments, segment_length))
             data_reshaped_exp = np.reshape(data_exp, (num_of_segments, segment_length))
 
-
             for cnt,trc in enumerate(data_reshaped_sync):
                 mask = (trc+1)/2 # Since this is data from trigger input, after this all the values are either close to zero or close to one
                 mask = mask.round() # After this, all the values that were close to one are one and all the values that were close to zero are zero. So we have a mask.
                 exp_trc = data_reshaped_exp[cnt]
-  
+
                 masked_trace = ma.masked_array(exp_trc, mask=mask) # So now masked_trace is left only with values from exp_trc which are at the positions of zeros from mask. 
-                                                                   # Like this we get rid of all the unwanted spurious data like sensor pickup of experimental pulses
+
                 # Since exp_trc contains consecuitve repetitions of chunks to be averaged, we can average all the points inside masked_trace and this is 
                 # then a single point in our measurement.
                 data.append(masked_trace.mean())                         
@@ -3190,7 +3199,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
             data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
         else:
             data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
-            
+
         for idm, mname in enumerate(measure_names):
             alldata.arrays[mname].ndarray[ix] = data[idm]
 
