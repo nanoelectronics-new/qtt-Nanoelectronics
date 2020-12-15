@@ -3051,7 +3051,7 @@ def scan2Dfast(station, scanjob, location=None, liveplotwindow=None, plotparam='
 
 
 def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plotparam='measured',
-               diff_dir=None, verbose=1, extra_metadata=None, saving=True, upload_wave = True, con_avg = True):
+               diff_dir=None, verbose=1, extra_metadata=None, saving=True, upload_wave = True, daq = False, con_avg = False, DAQ_init_dict=None, getDAQdata = None):
     """Make a 2D scan and create qcodes dataset to store on disk.
     
     Args:
@@ -3097,10 +3097,11 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
     else:
         scanjob['scantype'] = 'scan2Dfast'
 
-    Segment_duration = scanjob['sweepdata']['segment_duration']
+    Segment_duration = scanjob['sweepdata'].get('segment_duration', None)  
     #Nsegments = len(np.arange(scanjob['sweepdata']['start'], scanjob['sweepdata']['end'], scanjob['sweepdata']['step']))
     Naverage = scanjob.get('Naverage', 20)
     stepdata = scanjob['stepdata']
+    UHFLI_device = scanjob.get('device', None)
     sweepdata = scanjob['sweepdata']
     period = scanjob['sweepdata'].get('period', 1e-3)
     wait_time = stepdata.get('wait_time', 0)
@@ -3133,8 +3134,9 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
             sweepgate_value = (sweepdata['start'] + sweepdata['end']) / 2
             #gates.set(sweepdata['paramname'], float(sweepgate_value))
         
-
-    if con_avg:
+    if daq == True: # Then measure using UHFLI DAQ
+        data = getDAQdata(zidaq=minstrhandle.daq, device = UHFLI_device, virt_awg = virtual_awg, DAQ_init_dict = DAQ_init_dict)
+    elif con_avg:
         data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
     else:
         data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
@@ -3195,7 +3197,9 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
         else:
             time.sleep(wait_time)
         
-        if con_avg:
+        if daq == True: # Then measure using UHFLI DAQ
+            data = getDAQdata(zidaq=minstrhandle.daq, device = UHFLI_device, virt_awg = virtual_awg, DAQ_init_dict = DAQ_init_dict)
+        elif con_avg:
             data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
         else:
             data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
