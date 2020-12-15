@@ -2133,7 +2133,7 @@ def measure_segment_uhfli(zi, waveform, channels, number_of_averages=1, **kwargs
 
 
 # New version of the function
-def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels, number_of_avgs = 5, resolution = [96,96], **kwargs):
+def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels, number_of_avgs = 5, resolution = [96,96], timeout=30, wait_scope=0.2, **kwargs):
     """ 
     Aded by Jaime  and Josip 20200914
     Measure block data with Zurich Instruments UHFLI
@@ -2211,7 +2211,7 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
     scope_records =[]
     for ii in range(number_of_avgs_outer):
 
-        scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg)
+        scope_record = get_uhfli_scope_records_AWG_sync(zi.device, zi.daq, zi.scope, 1, virt_awg = virtual_awg, timeout=timeout,wait_scope=wait_scope)
         scope_records.append(scope_record)
     data_out = []
     for channel_index, _ in enumerate(chans):
@@ -3106,6 +3106,9 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
     period = scanjob['sweepdata'].get('period', 1e-3)
     wait_time = stepdata.get('wait_time', 0)
     wait_time_startscan = scanjob.get('wait_time_startscan', 0)
+    scope_timeout = scanjob.get('scope_timeout', None)
+    wait_scope = scanjob.get('wait_scope', None)
+    
 
     if scanjob['scantype'] == 'scan2Dfastvec':
         scanjob._parse_2Dvec()
@@ -3139,8 +3142,8 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
     elif con_avg:
         data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
     else:
-        data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
-
+        data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None, timeout=scope_timeout, wait_scope=wait_scope)
+    fdfdf
     if len(read_ch) == 1:
         measure_names = ['measured']
     else:
