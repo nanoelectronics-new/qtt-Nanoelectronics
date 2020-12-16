@@ -3143,7 +3143,7 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
         data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
     else:
         data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None, timeout=scope_timeout, wait_scope=wait_scope)
-    fdfdf
+
     if len(read_ch) == 1:
         measure_names = ['measured']
     else:
