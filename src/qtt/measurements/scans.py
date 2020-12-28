@@ -2179,6 +2179,8 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
     if resolution != None: # if the resolution is passed the user expect 2D map as a funtion output
         num_rows = int(resolution[0])
         num_cols = int(resolution[1])
+        # And in this case we can set the exact number of points we want to acquire
+        zi.scope_length.set(num_rows*num_cols)
 
     UHFLI_read_nodes = {0:'Signal Input 1',1:'Signal Input 2',
         2:'Demod 1 X',3:'Demod 1 Y',
@@ -2232,7 +2234,7 @@ def measure_segment_uhfli_AWG_turbo(zi, Segment_duration, virtual_awg, channels,
                 avg = np.mean(data_reshape, axis=0) 
 
                 if resolution != None: # if the resolution is passed the user expect 2D map as a funtion output
-                    avg = avg [:((num_rows-1)*num_cols)] # Truncating the data of one measurement map to one row less
+                    avg = avg[:((num_rows-1)*num_cols)] # Truncating the data of one measurement map to one row less
                                                          # because the error in rounding causes the total
                                                          # number of elements to be less then num_rows*num_cols
     
