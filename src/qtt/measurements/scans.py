@@ -3184,88 +3184,90 @@ def scan2Dfast_funnel(station, scanjob, location=None, liveplotwindow=None, plot
 
     tprev = time.time()
 
-    for ix, x in enumerate(stepvalues):
-        if type(stepvalues) is np.ndarray:
-            tprint('scan2Dfast: %d/%d: setting %s to %s' %
-                   (ix, len(stepvalues), stepdata['param'].name, str(x)), dt=.5)
-        else:
-            tprint('scan2Dfast: %d/%d: setting %s to %.3f' %
-                   (ix, len(stepvalues), stepvalues.name, x), dt=.5)
-        if scanjob['scantype'] == 'scan2Dfastvec' and isinstance(stepdata['param'], dict):
-            for g in stepdata['param']:
-                gates.set(g, (scanjob['phys_gates_vals'][g][ix, 0]
-                              + scanjob['phys_gates_vals'][g][ix, -1]) / 2)
-        else:
-            stepdata['param'].set(x)
-        if ix == 0:
-            time.sleep(wait_time_startscan)
-        else:
-            time.sleep(wait_time)
-        
-        if daq == True: # Then measure using UHFLI DAQ
-            data = getDAQdata(zidaq=minstrhandle.daq, device = UHFLI_device, virt_awg = virtual_awg, DAQ_init_dict = DAQ_init_dict)
-        elif con_avg:
-            data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
-        else:
-            data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
+    try:
+        for ix, x in enumerate(stepvalues):
+            if type(stepvalues) is np.ndarray:
+                tprint('scan2Dfast: %d/%d: setting %s to %s' %
+                       (ix, len(stepvalues), stepdata['param'].name, str(x)), dt=.5)
+            else:
+                tprint('scan2Dfast: %d/%d: setting %s to %.3f' %
+                       (ix, len(stepvalues), stepvalues.name, x), dt=.5)
+            if scanjob['scantype'] == 'scan2Dfastvec' and isinstance(stepdata['param'], dict):
+                for g in stepdata['param']:
+                    gates.set(g, (scanjob['phys_gates_vals'][g][ix, 0]
+                                  + scanjob['phys_gates_vals'][g][ix, -1]) / 2)
+            else:
+                stepdata['param'].set(x)
+            if ix == 0:
+                time.sleep(wait_time_startscan)
+            else:
+                time.sleep(wait_time)
+            
+            if daq == True: # Then measure using UHFLI DAQ
+                data = getDAQdata(zidaq=minstrhandle.daq, device = UHFLI_device, virt_awg = virtual_awg, DAQ_init_dict = DAQ_init_dict)
+            elif con_avg:
+                data = measure_segment_uhfli_consequtive_averages(minstrhandle, Segment_duration, sweeprange, virtual_awg, read_ch, number_of_avgs = Naverage)
+            else:
+                data = measure_segment_uhfli_AWG_turbo(minstrhandle, Segment_duration, virtual_awg, read_ch, number_of_avgs = Naverage, resolution = None)
 
-        for idm, mname in enumerate(measure_names):
-            alldata.arrays[mname].ndarray[ix] = data[idm]
+            for idm, mname in enumerate(measure_names):
+                alldata.arrays[mname].ndarray[ix] = data[idm]
 
-        delta, tprev, update = _delta_time(tprev, thr=1.)
-        print('Time left: %.3f seconds'%((len(stepvalues)-ix)*delta))
-        if update:
-            if liveplotwindow is not None:
-                liveplotwindow.update_plot()
+            delta, tprev, update = _delta_time(tprev, thr=1.)
+            print('Time left: %.3f seconds'%((len(stepvalues)-ix)*delta))
+            if update:
+                if liveplotwindow is not None:
+                    liveplotwindow.update_plot()
+                pyqtgraph.mkQApp().processEvents()
+            if qtt.abort_measurements():
+                print('  aborting measurement loop')
+                break
+                
+    finally:
+        if virtual_awg:
+            virtual_awg.stop()
+        else:
+            station.awg.stop()
+
+        dt = time.time() - t0
+
+        if liveplotwindow is not None:
+            liveplotwindow.update_plot()
             pyqtgraph.mkQApp().processEvents()
-        if qtt.abort_measurements():
-            print('  aborting measurement loop')
-            break
 
-    if virtual_awg:
-        virtual_awg.stop()
-    else:
-        station.awg.stop()
+        if hasattr(stepvalues, 'ndim') and stepvalues.ndim > 1:
+            for idp, steppm_add in enumerate(stepdata['param'].params):
+                if idp <= 0:
+                    continue
+                data_arr_step_add = DataArray(steppm_add, name=steppm_add.name, full_name=steppm_add.name,
+                                              array_id=steppm_add.name,
+                                              preset_data=np.repeat(
+                                                  stepvalues[:, idp, np.newaxis], alldata.arrays[measure_names[0]].shape[1],
+                                                  axis=1),
+                                              set_arrays=alldata.arrays[measure_names[0]].set_arrays)
+                alldata.add_array(data_arr_step_add)
 
-    dt = time.time() - t0
+        if diff_dir is not None:
+            for mname in measure_names:
+                alldata = diffDataset(alldata, diff_dir=diff_dir,
+                                      fig=None, meas_arr_name=mname)
 
-    if liveplotwindow is not None:
-        liveplotwindow.update_plot()
-        pyqtgraph.mkQApp().processEvents()
+        if not hasattr(alldata, 'metadata'):
+            alldata.metadata = dict()
 
-    if hasattr(stepvalues, 'ndim') and stepvalues.ndim > 1:
-        for idp, steppm_add in enumerate(stepdata['param'].params):
-            if idp <= 0:
-                continue
-            data_arr_step_add = DataArray(steppm_add, name=steppm_add.name, full_name=steppm_add.name,
-                                          array_id=steppm_add.name,
-                                          preset_data=np.repeat(
-                                              stepvalues[:, idp, np.newaxis], alldata.arrays[measure_names[0]].shape[1],
-                                              axis=1),
-                                          set_arrays=alldata.arrays[measure_names[0]].set_arrays)
-            alldata.add_array(data_arr_step_add)
+        if extra_metadata is not None:
+            update_dictionary(alldata.metadata, **extra_metadata)
 
-    if diff_dir is not None:
-        for mname in measure_names:
-            alldata = diffDataset(alldata, diff_dir=diff_dir,
-                                  fig=None, meas_arr_name=mname)
+        update_dictionary(alldata.metadata, scanjob=dict(scanjob), allgatevalues=gatevals,
+                          dt=dt, station=station.snapshot())
+        _add_dataset_metadata(alldata)
 
-    if not hasattr(alldata, 'metadata'):
-        alldata.metadata = dict()
+        if saving == True:
+            alldata.write(write_metadata=False)
+        else:
+            print('You are not saving data')
 
-    if extra_metadata is not None:
-        update_dictionary(alldata.metadata, **extra_metadata)
-
-    update_dictionary(alldata.metadata, scanjob=dict(scanjob), allgatevalues=gatevals,
-                      dt=dt, station=station.snapshot())
-    _add_dataset_metadata(alldata)
-
-    if saving == True:
-        alldata.write(write_metadata=False)
-    else:
-        print('You are not saving data')
-
-    return alldata
+        return alldata
 
 
 
