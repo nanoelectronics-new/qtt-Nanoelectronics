@@ -1185,104 +1185,108 @@ def scan2D(station, scanjob, location=None, liveplotwindow=None, plotparam='meas
     # disable time-based write period
     alldata.write_period = None
 
-    for ix, x in enumerate(stepvalues):
-        alldata.store((ix,), {stepvalues.parameter.name: x})
+    try:
+        for ix, x in enumerate(stepvalues):
+            alldata.store((ix,), {stepvalues.parameter.name: x})
 
-        if verbose:
-            t1 = time.time() - t0
-            t1_str = time.strftime('%H:%M:%S', time.gmtime(t1))
-            if ix == 0:
-                time_est = len(sweepvalues) * len(stepvalues) * \
-                    scanjob['sweepdata'].get('wait_time', 0) * 2
-            else:
-                time_est = t1 / ix * len(stepvalues) - t1
-            time_est_str = time.strftime(
-                '%H:%M:%S', time.gmtime(time_est))
-            # NEW LINE (added by JoKu at 20200726)
-            if ix<5:
-                if type(stepvalues) is np.ndarray:
-                    tprint('scan2D: %d/%d, time %s (~%s remaining): setting %s to %s' %
-                        (ix, len(stepvalues), t1_str, time_est_str, stepdata['param'].name, str(x)), dt=1.5)
+            if verbose:
+                t1 = time.time() - t0
+                t1_str = time.strftime('%H:%M:%S', time.gmtime(t1))
+                if ix == 0:
+                    time_est = len(sweepvalues) * len(stepvalues) * \
+                        scanjob['sweepdata'].get('wait_time', 0) * 2
                 else:
-                    tprint('scan2D: %d/%d: time %s (~%s remaining): setting %s to %.3f' %
-                        (ix, len(stepvalues), t1_str, time_est_str, stepvalues.name, x), dt=1.5)
+                    time_est = t1 / ix * len(stepvalues) - t1
+                time_est_str = time.strftime(
+                    '%H:%M:%S', time.gmtime(time_est))
+                # NEW LINE (added by JoKu at 20200726)
+                if ix<5:
+                    if type(stepvalues) is np.ndarray:
+                        tprint('scan2D: %d/%d, time %s (~%s remaining): setting %s to %s' %
+                            (ix, len(stepvalues), t1_str, time_est_str, stepdata['param'].name, str(x)), dt=1.5)
+                    else:
+                        tprint('scan2D: %d/%d: time %s (~%s remaining): setting %s to %.3f' %
+                            (ix, len(stepvalues), t1_str, time_est_str, stepvalues.name, x), dt=1.5)
+
+            if scanjob['scantype'] == 'scan2Dvec':
+                pass
+            else:
+                stepvalues.set(x)
+            for iy, y in enumerate(sweepvalues):
+                if scanjob['scantype'] == 'scan2Dvec':
+                    for param in scanjob['phys_gates_vals']:
+                        gates.set(param, scanjob['phys_gates_vals'][param][ix, iy])
+                else:
+                    sweepvalues.set(y)
+                if iy == 0:
+                    if ix == 0:
+                        time.sleep(wait_time_startscan)
+                    else:
+                        time.sleep(wait_time_step)
+                if wait_time_sweep > 0:
+                    time.sleep(wait_time_sweep)
+
+                datapoint = {sweepvalues.parameter.name: y}
+
+                for ii, p in enumerate(mparams):
+                    datapoint[measure_names[ii]] = p.get()
+
+                alldata.store((ix, iy), datapoint)
+
+            if write_period is not None:
+                if ix % write_period == write_period - 1:
+                    alldata.write()
+                    alldata.last_write = time.time()
+            if update_period is not None:
+                if ix % update_period == update_period - 1:
+                    delta, tprev, update = _delta_time(tprev, thr=0.5)
+
+                    if update and liveplotwindow:
+                        liveplotwindow.update_plot()
+                        pyqtgraph.mkQApp().processEvents()
+
+            if qtt.abort_measurements():
+                print('  aborting measurement loop')
+                break
+
+
+    finally:
+        dt = time.time() - t0
+
+        if liveplotwindow:
+            liveplotwindow.update_plot()
+
+        if diff_dir is not None:
+            alldata = diffDataset(alldata, diff_dir=diff_dir, fig=None)
 
         if scanjob['scantype'] == 'scan2Dvec':
-            pass
-        else:
-            stepvalues.set(x)
-        for iy, y in enumerate(sweepvalues):
-            if scanjob['scantype'] == 'scan2Dvec':
-                for param in scanjob['phys_gates_vals']:
-                    gates.set(param, scanjob['phys_gates_vals'][param][ix, iy])
-            else:
-                sweepvalues.set(y)
-            if iy == 0:
-                if ix == 0:
-                    time.sleep(wait_time_startscan)
-                else:
-                    time.sleep(wait_time_step)
-            if wait_time_sweep > 0:
-                time.sleep(wait_time_sweep)
+            for param in scanjob['phys_gates_vals']:
+                parameter = gates.parameters[param]
+                if parameter.name in alldata.arrays.keys():
+                    warnings.warn('parameter %s already in dataset, skipping!' % parameter.name)
+                    continue
 
-            datapoint = {sweepvalues.parameter.name: y}
+                arr = DataArray(name=parameter.name, array_id=parameter.name, label=parameter.label, unit=parameter.unit,
+                                preset_data=scanjob['phys_gates_vals'][param],
+                                set_arrays=(
+                                    alldata.arrays[stepvalues.parameter.name], alldata.arrays[sweepvalues.parameter.name]))
 
-            for ii, p in enumerate(mparams):
-                datapoint[measure_names[ii]] = p.get()
+                alldata.add_array(arr)
 
-            alldata.store((ix, iy), datapoint)
+        if not hasattr(alldata, 'metadata'):
+            alldata.metadata = dict()
 
-        if write_period is not None:
-            if ix % write_period == write_period - 1:
-                alldata.write()
-                alldata.last_write = time.time()
-        if update_period is not None:
-            if ix % update_period == update_period - 1:
-                delta, tprev, update = _delta_time(tprev, thr=0.5)
+        if extra_metadata is not None:
+            update_dictionary(alldata.metadata, **extra_metadata)
 
-                if update and liveplotwindow:
-                    liveplotwindow.update_plot()
-                    pyqtgraph.mkQApp().processEvents()
+        update_dictionary(alldata.metadata, scanjob=dict(scanjob),
+                          dt=dt, station=station.snapshot())
+        update_dictionary(alldata.metadata, allgatevalues=gatevals)
+        _add_dataset_metadata(alldata)
 
-        if qtt.abort_measurements():
-            print('  aborting measurement loop')
-            break
-    dt = time.time() - t0
+        alldata.write(write_metadata=False) # Commented out by JoKu at 20200726
 
-    if liveplotwindow:
-        liveplotwindow.update_plot()
-
-    if diff_dir is not None:
-        alldata = diffDataset(alldata, diff_dir=diff_dir, fig=None)
-
-    if scanjob['scantype'] == 'scan2Dvec':
-        for param in scanjob['phys_gates_vals']:
-            parameter = gates.parameters[param]
-            if parameter.name in alldata.arrays.keys():
-                warnings.warn('parameter %s already in dataset, skipping!' % parameter.name)
-                continue
-
-            arr = DataArray(name=parameter.name, array_id=parameter.name, label=parameter.label, unit=parameter.unit,
-                            preset_data=scanjob['phys_gates_vals'][param],
-                            set_arrays=(
-                                alldata.arrays[stepvalues.parameter.name], alldata.arrays[sweepvalues.parameter.name]))
-
-            alldata.add_array(arr)
-
-    if not hasattr(alldata, 'metadata'):
-        alldata.metadata = dict()
-
-    if extra_metadata is not None:
-        update_dictionary(alldata.metadata, **extra_metadata)
-
-    update_dictionary(alldata.metadata, scanjob=dict(scanjob),
-                      dt=dt, station=station.snapshot())
-    update_dictionary(alldata.metadata, allgatevalues=gatevals)
-    _add_dataset_metadata(alldata)
-
-    alldata.write(write_metadata=False) # Commented out by JoKu at 20200726
-
-    return alldata
+        return alldata
 
 
 def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam='measured', diff_dir=None, write_period=None,
