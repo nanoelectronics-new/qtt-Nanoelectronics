@@ -1391,127 +1391,132 @@ def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam=
     poll_return_flat_dict = True 
 
 
+    try:
+        for ix, x in enumerate(stepvalues):
+            alldata.store((ix,), {stepvalues.parameter.name: x})
 
-    for ix, x in enumerate(stepvalues):
-        alldata.store((ix,), {stepvalues.parameter.name: x})
-
-        if verbose:
-            t1 = time.time() - t0
-            t1_str = time.strftime('%H:%M:%S', time.gmtime(t1))
-            if ix == 0:
-                time_est = len(sweepvalues) * len(stepvalues) * \
-                    scanjob['sweepdata'].get('wait_time', 0) * 2
-            else:
-                time_est = t1 / ix * len(stepvalues) - t1
-            time_est_str = time.strftime(
-                '%H:%M:%S', time.gmtime(time_est))
-            # NEW LINE (added by JoKu at 20200726)
-            if ix<5:
-                if type(stepvalues) is np.ndarray:
-                    tprint('scan2D: %d/%d, time %s (~%s remaining): setting %s to %s' %
-                        (ix, len(stepvalues), t1_str, time_est_str, stepdata['param'].name, str(x)), dt=1.5)
+            if verbose:
+                t1 = time.time() - t0
+                t1_str = time.strftime('%H:%M:%S', time.gmtime(t1))
+                if ix == 0:
+                    time_est = len(sweepvalues) * len(stepvalues) * \
+                        scanjob['sweepdata'].get('wait_time', 0) * 2
                 else:
-                    tprint('scan2D: %d/%d: time %s (~%s remaining): setting %s to %.3f' %
-                        (ix, len(stepvalues), t1_str, time_est_str, stepvalues.name, x), dt=1.5)
+                    time_est = t1 / ix * len(stepvalues) - t1
+                time_est_str = time.strftime(
+                    '%H:%M:%S', time.gmtime(time_est))
+                # NEW LINE (added by JoKu at 20200726)
+                if ix<5:
+                    if type(stepvalues) is np.ndarray:
+                        tprint('scan2D: %d/%d, time %s (~%s remaining): setting %s to %s' %
+                            (ix, len(stepvalues), t1_str, time_est_str, stepdata['param'].name, str(x)), dt=1.5)
+                    else:
+                        tprint('scan2D: %d/%d: time %s (~%s remaining): setting %s to %.3f' %
+                            (ix, len(stepvalues), t1_str, time_est_str, stepvalues.name, x), dt=1.5)
+
+            if scanjob['scantype'] == 'scan2Dvec':
+                pass
+            else:
+                stepvalues.set(x)
+            for iy, y in enumerate(sweepvalues):
+                if scanjob['scantype'] == 'scan2Dvec':
+                    for param in scanjob['phys_gates_vals']:
+                        gates.set(param, scanjob['phys_gates_vals'][param][ix, iy])
+                else:
+                    sweepvalues.set(y)
+                if iy == 0:
+                    if ix == 0:
+                        time.sleep(wait_time_startscan)
+                    else:
+                        time.sleep(wait_time_step)
+                if wait_time_sweep > 0:
+                    time.sleep(wait_time_sweep)
+
+                datapoint = {sweepvalues.parameter.name: y}
+
+
+                digitizer.daq.sync() 
+                data = digitizer.daq.poll(poll_length, poll_timeout, poll_flags, poll_return_flat_dict)  # Readout from subscribed node (demodulator)
+                # Check the dictionary returned is non-empty
+                assert data, "poll() returned an empty data dictionary, did you subscribe to any paths?"
+                # Note, the data could be empty if no data arrived, e.g., if the demods were
+                # disabled or had demodulator rate 0
+                assert path_demod in data, "data dictionary has no key '%s'" % path_demod
+                # The data returned is a dictionary of dictionaries that reflects the node's path
+                sample = data[path_demod]
+                sample_x = np.array(sample['x'])    # Converting samples to numpy arrays for faster calculation
+                sample_y = np.array(sample['y'])    # Converting samples to numpy arrays for faster calculation
+                sample_r = np.sqrt(sample_x**2 + sample_y**2)   # Calculating R value from X and y value
+                mean_x = np.mean(sample_x)
+                mean_y = np.mean(sample_y)
+                mean_r = np.mean(sample_r)  # Mean value of recorded data vector
+                mean_fi = np.arctan2(mean_y,mean_x) * 180 / np.pi  # Calculating the angle value in degrees
+                means = {('demod{}_R'.format(demod_c+1)):mean_r, ('demod{}_phi'.format(demod_c+1)):mean_fi, 
+                        ('demod{}_x'.format(demod_c+1)):mean_x, ('demod{}_y'.format(demod_c+1)):mean_y}
+                #means = []
+                for ii, p in enumerate(mparams):
+                    # Saving the demodulator data in the order defined in the scajob minstrument list
+                    k = str(p)[10:]
+                    datapoint[measure_names[ii]] = means[k]
+
+                alldata.store((ix, iy), datapoint)
+
+            if write_period is not None:
+                if ix % write_period == write_period - 1:
+                    alldata.write()
+                    alldata.last_write = time.time()
+            if update_period is not None:
+                if ix % update_period == update_period - 1:
+                    delta, tprev, update = _delta_time(tprev, thr=0.5)
+
+                    if update and liveplotwindow:
+                        liveplotwindow.update_plot()
+                        pyqtgraph.mkQApp().processEvents()
+
+            if qtt.abort_measurements():
+                print('  aborting measurement loop')
+                break
+
+    finally:
+
+        dt = time.time() - t0
+
+        if liveplotwindow:
+            liveplotwindow.update_plot()
+
+        if diff_dir is not None:
+            alldata = diffDataset(alldata, diff_dir=diff_dir, fig=None)
 
         if scanjob['scantype'] == 'scan2Dvec':
-            pass
-        else:
-            stepvalues.set(x)
-        for iy, y in enumerate(sweepvalues):
-            if scanjob['scantype'] == 'scan2Dvec':
-                for param in scanjob['phys_gates_vals']:
-                    gates.set(param, scanjob['phys_gates_vals'][param][ix, iy])
-            else:
-                sweepvalues.set(y)
-            if iy == 0:
-                if ix == 0:
-                    time.sleep(wait_time_startscan)
-                else:
-                    time.sleep(wait_time_step)
-            if wait_time_sweep > 0:
-                time.sleep(wait_time_sweep)
+            for param in scanjob['phys_gates_vals']:
+                parameter = gates.parameters[param]
+                if parameter.name in alldata.arrays.keys():
+                    warnings.warn('parameter %s already in dataset, skipping!' % parameter.name)
+                    continue
 
-            datapoint = {sweepvalues.parameter.name: y}
+                arr = DataArray(name=parameter.name, array_id=parameter.name, label=parameter.label, unit=parameter.unit,
+                                preset_data=scanjob['phys_gates_vals'][param],
+                                set_arrays=(
+                                    alldata.arrays[stepvalues.parameter.name], alldata.arrays[sweepvalues.parameter.name]))
+
+                alldata.add_array(arr)
+
+        if not hasattr(alldata, 'metadata'):
+            alldata.metadata = dict()
+
+        if extra_metadata is not None:
+            update_dictionary(alldata.metadata, **extra_metadata)
+
+        update_dictionary(alldata.metadata, scanjob=dict(scanjob),
+                          dt=dt, station=station.snapshot())
+        update_dictionary(alldata.metadata, allgatevalues=gatevals)
+        _add_dataset_metadata(alldata)
+
+        alldata.write(write_metadata=False) # Commented out by JoKu at 20200726
+
+        return alldata
 
 
-            digitizer.daq.sync() 
-            data = digitizer.daq.poll(poll_length, poll_timeout, poll_flags, poll_return_flat_dict)  # Readout from subscribed node (demodulator)
-            # Check the dictionary returned is non-empty
-            assert data, "poll() returned an empty data dictionary, did you subscribe to any paths?"
-            # Note, the data could be empty if no data arrived, e.g., if the demods were
-            # disabled or had demodulator rate 0
-            assert path_demod in data, "data dictionary has no key '%s'" % path_demod
-            # The data returned is a dictionary of dictionaries that reflects the node's path
-            sample = data[path_demod]
-            sample_x = np.array(sample['x'])    # Converting samples to numpy arrays for faster calculation
-            sample_y = np.array(sample['y'])    # Converting samples to numpy arrays for faster calculation
-            sample_r = np.sqrt(sample_x**2 + sample_y**2)   # Calculating R value from X and y value
-            mean_x = np.mean(sample_x)
-            mean_y = np.mean(sample_y)
-            mean_r = np.mean(sample_r)  # Mean value of recorded data vector
-            mean_fi = np.arctan2(mean_y,mean_x) * 180 / np.pi  # Calculating the angle value in degrees
-            means = {('demod{}_R'.format(demod_c+1)):mean_r, ('demod{}_phi'.format(demod_c+1)):mean_fi, 
-                    ('demod{}_x'.format(demod_c+1)):mean_x, ('demod{}_y'.format(demod_c+1)):mean_y}
-            #means = []
-            for ii, p in enumerate(mparams):
-                # Saving the demodulator data in the order defined in the scajob minstrument list
-                k = str(p)[10:]
-                datapoint[measure_names[ii]] = means[k]
-
-            alldata.store((ix, iy), datapoint)
-
-        if write_period is not None:
-            if ix % write_period == write_period - 1:
-                alldata.write()
-                alldata.last_write = time.time()
-        if update_period is not None:
-            if ix % update_period == update_period - 1:
-                delta, tprev, update = _delta_time(tprev, thr=0.5)
-
-                if update and liveplotwindow:
-                    liveplotwindow.update_plot()
-                    pyqtgraph.mkQApp().processEvents()
-
-        if qtt.abort_measurements():
-            print('  aborting measurement loop')
-            break
-    dt = time.time() - t0
-
-    if liveplotwindow:
-        liveplotwindow.update_plot()
-
-    if diff_dir is not None:
-        alldata = diffDataset(alldata, diff_dir=diff_dir, fig=None)
-
-    if scanjob['scantype'] == 'scan2Dvec':
-        for param in scanjob['phys_gates_vals']:
-            parameter = gates.parameters[param]
-            if parameter.name in alldata.arrays.keys():
-                warnings.warn('parameter %s already in dataset, skipping!' % parameter.name)
-                continue
-
-            arr = DataArray(name=parameter.name, array_id=parameter.name, label=parameter.label, unit=parameter.unit,
-                            preset_data=scanjob['phys_gates_vals'][param],
-                            set_arrays=(
-                                alldata.arrays[stepvalues.parameter.name], alldata.arrays[sweepvalues.parameter.name]))
-
-            alldata.add_array(arr)
-
-    if not hasattr(alldata, 'metadata'):
-        alldata.metadata = dict()
-
-    if extra_metadata is not None:
-        update_dictionary(alldata.metadata, **extra_metadata)
-
-    update_dictionary(alldata.metadata, scanjob=dict(scanjob),
-                      dt=dt, station=station.snapshot())
-    update_dictionary(alldata.metadata, allgatevalues=gatevals)
-    _add_dataset_metadata(alldata)
-
-    alldata.write(write_metadata=False) # Commented out by JoKu at 20200726
-
-    return alldata
 
 
 def scan2D_poll_diff(station, scanjob, location=None, liveplotwindow=None, plotparam='measured', diff_dir=None, write_period=None,
