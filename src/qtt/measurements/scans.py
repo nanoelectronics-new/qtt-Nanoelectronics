@@ -1290,7 +1290,7 @@ def scan2D(station, scanjob, location=None, liveplotwindow=None, plotparam='meas
 
 
 def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam='measured', diff_dir=None, write_period=None,
-           update_period=5, verbose=1, extra_metadata=None, demod_c = 3, poll_length = 0.003, digitizer = None):
+           update_period=5, verbose=1, extra_metadata=None, demod_c = 3, poll_length = 0.003, digitizer = None, callable_outer_loop = None):
     """
 
     !!! This function is a version of the standard scan2D function but for using only when reading UHFLI nodes
@@ -1418,6 +1418,12 @@ def scan2D_poll(station, scanjob, location=None, liveplotwindow=None, plotparam=
                 pass
             else:
                 stepvalues.set(x)
+
+
+            # If the callable_outer_loop is not None, run it. This function can be used for e.g. recalibrating some UHFLI settings after setting each By value.
+            if callable_outer_loop!=None:
+            	callable_outer_loop()
+
             for iy, y in enumerate(sweepvalues):
                 if scanjob['scantype'] == 'scan2Dvec':
                     for param in scanjob['phys_gates_vals']:
