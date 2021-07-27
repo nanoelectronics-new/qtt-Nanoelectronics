@@ -1224,7 +1224,7 @@ def scan2D(station, scanjob, location=None, liveplotwindow=None, plotparam='meas
                         time.sleep(wait_time_startscan)
                     else:
                         time.sleep(wait_time_step)
-                        print(wait_time_step)
+                
                 if wait_time_sweep > 0:
                     time.sleep(wait_time_sweep)
 
