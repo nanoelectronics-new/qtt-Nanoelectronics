@@ -1157,7 +1157,7 @@ def scan2D(station, scanjob, location=None, liveplotwindow=None, plotparam='meas
     sweepdata = scanjob['sweepdata']
 
     wait_time_sweep = sweepdata.get('wait_time', 0)
-    wait_time_step = stepdata.get('wait_time', 0)
+    wait_time_step = stepdata.get('wait_time_step', 0)
     wait_time_startscan = scanjob.get('wait_time_startscan', wait_time_step)
     logging.info('scan2D: %d %d' % (len(stepvalues), len(sweepvalues)))
     logging.info('scan2D: wait_time_sweep %f' % wait_time_sweep)
@@ -1212,6 +1212,7 @@ def scan2D(station, scanjob, location=None, liveplotwindow=None, plotparam='meas
                 pass
             else:
                 stepvalues.set(x)
+
             for iy, y in enumerate(sweepvalues):
                 if scanjob['scantype'] == 'scan2Dvec':
                     for param in scanjob['phys_gates_vals']:
@@ -1223,6 +1224,7 @@ def scan2D(station, scanjob, location=None, liveplotwindow=None, plotparam='meas
                         time.sleep(wait_time_startscan)
                     else:
                         time.sleep(wait_time_step)
+                        print(wait_time_step)
                 if wait_time_sweep > 0:
                     time.sleep(wait_time_sweep)
 
