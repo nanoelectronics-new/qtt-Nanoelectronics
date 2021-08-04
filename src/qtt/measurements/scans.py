@@ -3180,13 +3180,20 @@ def scan2Dfast(station, scanjob, location=None, liveplotwindow=None, plotparam='
                  'period': period}, scanjob['pulsedata'])
         else:
             if virtual_awg:
+                awg_amps_before = virtual_awg.awgs[0].fetch_awg.ch1_amp.get()
                 gates = {sweepdata['param'].name: 1}
                 waveform = virtual_awg.sweep_gates(gates, sweeprange, period, do_upload = upload_wave)
+                # Set the amplitude back becasue some of the above functions mess this up
+                virtual_awg.awgs[0].fetch_awg.ch1_amp.set(awg_amps_before)
+                virtual_awg.awgs[0].fetch_awg.ch2_amp.set(awg_amps_before)
+                virtual_awg.awgs[0].fetch_awg.ch3_amp.set(awg_amps_before)
+                virtual_awg.awgs[0].fetch_awg.ch4_amp.set(awg_amps_before)
+
                 virtual_awg.enable_outputs(list(gates.keys()))
                 virtual_awg.run()
             else:
                 waveform, sweep_info = station.awg.sweep_gate(sweepdata['param'].name, sweeprange, period)
-
+				
     data = measuresegment(waveform, Naverage, minstrhandle, read_ch)
     if len(read_ch) == 1:
         measure_names = ['measured']
